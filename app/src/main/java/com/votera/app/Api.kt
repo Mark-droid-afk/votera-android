@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit
 
 // Emulator: 10.0.2.2 reaches your laptop. Real phone: use your laptop's Wi-Fi IP, e.g. "http://192.168.1.10:8000/".
 // After deploying the backend, use its https address instead.
-const val BASE_URL = "http://10.0.2.2:8000/"
+const val BASE_URL = "192.168.1.12"
 
 object Session { @Volatile var token: String? = null }
 
