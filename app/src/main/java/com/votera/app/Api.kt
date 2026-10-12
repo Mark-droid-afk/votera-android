@@ -1,8 +1,11 @@
 package com.votera.app
 
+import android.content.Context
+import android.content.SharedPreferences
 import com.google.gson.FieldNamingPolicy
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import retrofit2.HttpException
 import retrofit2.Retrofit
@@ -15,14 +18,47 @@ import retrofit2.http.Path
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-// Emulator: 10.0.2.2 reaches your laptop. Real phone: use your laptop's Wi-Fi IP, e.g. "http://192.168.1.10:8000/".
-// After deploying the backend, use its https address instead.
+// Default server address. Emulator: http://10.0.2.2:8000/ . Real phone: your laptop's Wi-Fi IP.
+// It can also be changed on the login screen (Server settings) without rebuilding the app.
 const val BASE_URL = "http://192.168.1.12:8000/"
+
+/** Holds the server address the app talks to. The saved address on the phone overrides BASE_URL. */
+object ServerConfig {
+    private var prefs: SharedPreferences? = null
+    @Volatile var baseUrl: String = BASE_URL
+        private set
+
+    fun init(context: Context) {
+        val p = context.getSharedPreferences("votera_server", Context.MODE_PRIVATE)
+        prefs = p
+        p.getString("base_url", null)?.let { if (it.isNotBlank()) baseUrl = it }
+    }
+
+    /** Accepts "192.168.1.12", "192.168.1.12:8000", "http://192.168.1.12:8000" or an https address. Returns null if invalid. */
+    fun normalize(raw: String): String? {
+        var s = raw.trim()
+        if (s.isEmpty()) return null
+        if (!s.startsWith("http://", true) && !s.startsWith("https://", true)) s = "http://$s"
+        val schemeEnd = s.indexOf("://") + 3
+        val hostEnd = s.indexOf('/', schemeEnd).let { if (it == -1) s.length else it }
+        val authority = s.substring(schemeEnd, hostEnd)
+        // A bare IP address with no port gets the backend's default port.
+        if (Regex("""\d{1,3}(\.\d{1,3}){3}""").matches(authority)) s = s.substring(0, hostEnd) + ":8000" + s.substring(hostEnd)
+        if (!s.endsWith("/")) s += "/"
+        return if (s.toHttpUrlOrNull() != null) s else null
+    }
+
+    fun save(url: String) {
+        baseUrl = url
+        prefs?.edit()?.putString("base_url", url)?.apply()
+    }
+}
 
 object Session { @Volatile var token: String? = null }
 
 // Field names are camelCase here and become snake_case in JSON (naming policy below).
-data class LoginReq(val studentNumber: String, val password: String)
+// portal is "student" or "admin": which login screen was used. The server rejects a mismatch (RBAC).
+data class LoginReq(val studentNumber: String, val password: String, val portal: String)
 data class LoginRes(val otpToken: String, val devOtp: String)
 data class OtpReq(val otpToken: String, val code: String)
 data class UserDto(val studentNumber: String, val fullName: String, val program: String, val role: String)
@@ -72,12 +108,23 @@ object Net {
             chain.proceed(b.build())
         }.build()
 
-    val api: VoteraApi by lazy {
-        val gson = GsonBuilder().setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create()
-        Retrofit.Builder().baseUrl(BASE_URL).client(client)
-            .addConverterFactory(GsonConverterFactory.create(gson)).build()
-            .create(VoteraApi::class.java)
-    }
+    private var cachedUrl = ""
+    private var cachedApi: VoteraApi? = null
+
+    /** Rebuilt automatically whenever the server address changes. */
+    val api: VoteraApi
+        @Synchronized get() {
+            val url = ServerConfig.baseUrl
+            val existing = cachedApi
+            if (existing != null && cachedUrl == url) return existing
+            val gson = GsonBuilder().setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create()
+            val built = Retrofit.Builder().baseUrl(url).client(client)
+                .addConverterFactory(GsonConverterFactory.create(gson)).build()
+                .create(VoteraApi::class.java)
+            cachedApi = built
+            cachedUrl = url
+            return built
+        }
 }
 
 /** Turns a failed call into a message a student can read (FastAPI sends {"detail": "..."}). */
@@ -87,6 +134,6 @@ fun errorMessage(t: Throwable): String = when (t) {
         val d = JsonParser.parseString(body).asJsonObject.get("detail")
         if (d != null && d.isJsonPrimitive) d.asString else "Invalid input"
     } catch (e: Exception) { "Request failed (${t.code()})" }
-    is IOException -> "Cannot reach the server. Check your connection and the server address."
+    is IOException -> "Cannot reach the server at ${ServerConfig.baseUrl}. Check your connection and the server address."
     else -> t.message ?: "Something went wrong"
 }

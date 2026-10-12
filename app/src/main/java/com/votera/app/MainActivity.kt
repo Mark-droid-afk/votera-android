@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -16,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -24,11 +26,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -76,8 +84,9 @@ class AppVM : ViewModel() {
         if (user?.role == "admin") flagged = api.flagged().flagged
     }
 
-    fun login(studentNumber: String, password: String) = launchTask {
-        val r = Net.api.login(LoginReq(studentNumber.trim(), password))
+    /** portal is "student" or "admin": the login screen the person used. The server rejects a mismatch. */
+    fun login(studentNumber: String, password: String, portal: String) = launchTask {
+        val r = Net.api.login(LoginReq(studentNumber.trim(), password, portal))
         otpToken = r.otpToken
         devOtp = r.devOtp  // OTP delivery is simulated in the prototype, so the code is shown on screen
         stage = "otp"
@@ -130,27 +139,37 @@ class AppVM : ViewModel() {
     }
 }
 
+// Brand colors taken from the VotEra logo
+private val MAROON = Color(0xFF720927)
+private val GOLD = Color(0xFFD4A033)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ServerConfig.init(applicationContext)  // loads the saved server address, if any
+        window.statusBarColor = MAROON.toArgb()
+        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = false
         setContent { VoteraApp() }
     }
 }
 
 private val PALETTE = listOf(
-    Color(0xFF800000), Color(0xFFB8860B), Color(0xFF1F6F8B), Color(0xFF4C7A34),
+    MAROON, GOLD, Color(0xFF1F6F8B), Color(0xFF4C7A34),
     Color(0xFF6A4C93), Color(0xFFC1440E), Color(0xFF555555)
 )
 
 private fun fmt(d: Double?) = if (d == null) "-" else "%.1f".format(d)
 
+private fun initials(name: String) =
+    name.split(" ").filter { it.isNotBlank() }.take(2).joinToString("") { it.first().uppercase() }
+
 // ---------------- App shell ----------------
 @Composable
 fun VoteraApp(vm: AppVM = viewModel()) {
     MaterialTheme(colorScheme = lightColorScheme(
-        primary = Color(0xFF800000), onPrimary = Color.White,
-        primaryContainer = Color(0xFFF3DADA), onPrimaryContainer = Color(0xFF3B0000),
-        secondary = Color(0xFFB8860B), background = Color(0xFFFAF8F6), surface = Color(0xFFFAF8F6)
+        primary = MAROON, onPrimary = Color.White,
+        primaryContainer = Color(0xFFF1DCE2), onPrimaryContainer = Color(0xFF3A0413),
+        secondary = GOLD, background = Color(0xFFFAF8F6), surface = Color(0xFFFAF8F6)
     )) {
         val snack = remember { SnackbarHostState() }
         var tab by remember { mutableStateOf("candidates") }
@@ -164,16 +183,21 @@ fun VoteraApp(vm: AppVM = viewModel()) {
         }
 
         LaunchedEffect(vm.message) { vm.message?.let { snack.showSnackbar(it); vm.message = null } }
+        // Administrators land on the Admin tab; students (and a logged-out app) land on Candidates.
+        LaunchedEffect(vm.user?.role) { tab = if (vm.user?.role == "admin") "admin" else "candidates"; detailId = null }
         BackHandler(enabled = vm.stage == "main" && detailId != null) { detailId = null }
+        BackHandler(enabled = vm.stage == "otp") { vm.backToLogin() }
 
         Scaffold(
             snackbarHost = { SnackbarHost(snack) },
             topBar = {
                 if (vm.stage == "main") TopAppBar(
-                    title = { Text(vm.election?.title ?: "Votera", maxLines = 1, fontSize = 16.sp) },
+                    title = { Text(vm.election?.title ?: "VotEra", maxLines = 1, fontSize = 16.sp) },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MAROON, titleContentColor = Color.White),
                     actions = {
-                        TextButton(onClick = { vm.refresh() }) { Text("Refresh") }
-                        TextButton(onClick = { tab = "candidates"; detailId = null; vm.logout() }) { Text("Log out") }
+                        val bar = ButtonDefaults.textButtonColors(contentColor = Color.White)
+                        TextButton(onClick = { vm.refresh() }, colors = bar) { Text("Refresh") }
+                        TextButton(onClick = { tab = "candidates"; detailId = null; vm.logout() }, colors = bar) { Text("Log out") }
                     }
                 )
             },
@@ -198,7 +222,7 @@ fun VoteraApp(vm: AppVM = viewModel()) {
                             "compare" -> CompareTab(vm)
                             "updates" -> UpdatesTab(vm)
                             "results" -> ResultsTab(vm)
-                            "admin" -> AdminTab(vm)
+                            "admin" -> if (isAdmin) AdminTab(vm)
                         }
                     }
                 }
@@ -218,23 +242,56 @@ fun VoteraApp(vm: AppVM = viewModel()) {
     }
 }
 
-// ---------------- Login (password, then OTP) ----------------
+// ---------------- Login (Student or Administrator: password, then OTP) ----------------
 @Composable
 fun LoginScreen(vm: AppVM) {
+    var admin by remember { mutableStateOf(false) }
     var sn by remember { mutableStateOf("") }
     var pw by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
-        Text("Votera", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary)
-        Text("Simulated Supreme Student Council election, PUP Quezon City", Modifier.padding(bottom = 24.dp))
-        OutlinedTextField(sn, { sn = it }, label = { Text("Student number") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth())
+    var showPw by remember { mutableStateOf(false) }
+    var showServer by remember { mutableStateOf(false) }
+    var server by remember { mutableStateOf(ServerConfig.baseUrl) }
+    val canSubmit = sn.isNotBlank() && pw.isNotEmpty() && !vm.busy
+    fun submit() { if (canSubmit) vm.login(sn, pw, if (admin) "admin" else "student") }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.Center) {
+        Image(painterResource(R.drawable.votera_logo), contentDescription = "VotEra logo",
+            modifier = Modifier.height(190.dp).align(Alignment.CenterHorizontally))
+        Spacer(Modifier.height(8.dp))
+        Text(if (admin) "Administrator login for election staff" else "Simulated Supreme Student Council election, PUP Quezon City",
+            Modifier.padding(bottom = 16.dp).align(Alignment.CenterHorizontally), fontSize = 13.sp, textAlign = TextAlign.Center)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            FilterChip(selected = !admin, onClick = { admin = false; pw = ""; showPw = false }, label = { Text("Student") })
+            FilterChip(selected = admin, onClick = { admin = true; pw = ""; showPw = false }, label = { Text("Administrator") })
+        }
+        Spacer(Modifier.height(16.dp))
+        OutlinedTextField(sn, { sn = it }, label = { Text(if (admin) "Administrator ID" else "Student number") }, singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(pw, { pw = it }, label = { Text("Password") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+            visualTransformation = if (showPw) VisualTransformation.None else PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { submit() }),
+            trailingIcon = { TextButton(onClick = { showPw = !showPw }) { Text(if (showPw) "Hide" else "Show") } },
+            modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(20.dp))
-        Button(onClick = { vm.login(sn, pw) }, enabled = sn.isNotBlank() && pw.isNotEmpty() && !vm.busy,
-            modifier = Modifier.fillMaxWidth()) { Text("Continue") }
+        Button(onClick = { submit() }, enabled = canSubmit, modifier = Modifier.fillMaxWidth()) {
+            Text(if (admin) "Continue as administrator" else "Continue")
+        }
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = { showServer = !showServer }) { Text(if (showServer) "Hide server settings" else "Server settings") }
+        if (showServer) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(server, { server = it }, label = { Text("Server address") }, singleLine = true,
+                modifier = Modifier.weight(1f))
+            Button(onClick = {
+                val n = ServerConfig.normalize(server)
+                if (n == null) vm.message = "That server address is not valid"
+                else { ServerConfig.save(n); server = n; vm.message = "Server address saved" }
+            }) { Text("Save") }
+        }
+        Spacer(Modifier.height(24.dp))
+        Text("Research prototype for PUP Quezon City. Candidates and data are fictional. " +
+            "Participation is voluntary and responses are kept confidential (R.A. 10173).", fontSize = 11.sp)
     }
 }
 
@@ -273,6 +330,7 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Election status: ${e?.status ?: "-"}", fontWeight = FontWeight.Bold)
+                    vm.user?.let { Text("Signed in as ${it.fullName} (${it.studentNumber})", fontSize = 12.sp) }
                     if (vs?.hasVoted == true) Text("You have voted. Transaction ID: ${vs.transactionId?.take(16)}...", fontSize = 12.sp)
                     else if (vm.user?.role == "student") Text("Open a candidate to read the profile and vote.", fontSize = 12.sp)
                 }
@@ -281,6 +339,10 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
         items(vm.candidates) { c ->
             Card(Modifier.fillMaxWidth().clickable { onOpen(c.id) }) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(44.dp).clip(CircleShape).background(PALETTE[c.id % PALETTE.size]), contentAlignment = Alignment.Center) {
+                        Text(initials(c.fullName), color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(c.fullName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text("${c.position} | ${c.program}", fontSize = 13.sp)
