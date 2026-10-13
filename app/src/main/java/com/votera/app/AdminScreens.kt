@@ -43,7 +43,8 @@ fun AdminTab(vm: AppVM) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("overview" to "Overview", "candidates" to "Candidates", "audit" to "Vote audit", "voters" to "Voters").forEach { (id, label) ->
+            listOf("overview" to "Overview", "candidates" to "Candidates", "audit" to "Vote audit", "voters" to "Voters", "report" to "Report",
+                "activity" to "Activity", "selftest" to "Self-test").forEach { (id, label) ->
                 FilterChip(selected = sub == id, onClick = { vm.adminSub = id }, label = { Text(label) })
             }
         }
@@ -53,6 +54,9 @@ fun AdminTab(vm: AppVM) {
                 "overview" -> AdminOverview(vm)
                 "candidates" -> AdminCandidates(vm)
                 "audit" -> AdminAudit(vm)
+                "report" -> AdminReport(vm)
+                "activity" -> AdminActivity(vm)
+                "selftest" -> AdminSelfTest(vm)
                 else -> AdminVoters(vm)
             }
         }
@@ -78,6 +82,7 @@ fun AdminOverview(vm: AppVM) {
     var pendingStatus by remember { mutableStateOf<String?>(null) }
     var confirmReset by remember { mutableStateOf(false) }
     var confirmDemo by remember { mutableStateOf(false) }
+    var confirmCreds by remember { mutableStateOf(false) }
     val t = vm.results?.turnout
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -95,6 +100,24 @@ fun AdminOverview(vm: AppVM) {
                         }
                     }
                     Text("Students see a status change on their phones right away.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            Card {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Automatic closing time", style = MaterialTheme.typography.titleMedium)
+                    val left = countdownText(vm.deadline)
+                    Text(if (left != null && vm.election?.status == "open") left else if (left != null) "A closing time is set. $left" else "None set. The election stays open until you close it.",
+                        fontSize = 13.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        listOf(30 to "30 min", 60 to "1 hour", 180 to "3 hours", 1440 to "1 day").forEach { (m, label) ->
+                            FilterChip(selected = false, onClick = { vm.setSchedule(m) }, label = { Text(label) }, enabled = !vm.busy)
+                        }
+                        if (vm.deadline != null) AssistChip(onClick = { vm.setSchedule(null) }, label = { Text("Clear") })
+                    }
+                    Text("Counts down from now. Students see the countdown, and voting closes by itself at zero.", fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -164,6 +187,11 @@ fun AdminOverview(vm: AppVM) {
                     }
                     Text("Demo mode votes for accounts that have not voted, so the live charts can be shown. Reset the election afterwards.",
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedButton(onClick = { confirmCreds = true }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
+                        Text("Create credentials sheet (new passwords)")
+                    }
+                    Text("Gives every student a new random password and a sheet you can print or send. It replaces the old passwords.",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = { confirmReset = true }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)) {
                         Text("Reset election")
@@ -189,6 +217,30 @@ fun AdminOverview(vm: AppVM) {
         confirmButton = { TextButton(onClick = { vm.resetElection(); confirmReset = false }) { Text("Reset", color = MaterialTheme.colorScheme.error) } },
         dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Cancel") } }
     )
+    if (confirmCreds) AlertDialog(
+        onDismissRequest = { confirmCreds = false },
+        title = { Text("Create new passwords?") },
+        text = { Text("Every student gets a new random password. Old passwords stop working right away. The sheet is shown once, so share or save it before closing. This can take up to half a minute.") },
+        confirmButton = { TextButton(onClick = { vm.regenerateCredentials(null); confirmCreds = false }) { Text("Create sheet") } },
+        dismissButton = { TextButton(onClick = { confirmCreds = false }) { Text("Cancel") } }
+    )
+    vm.credentials?.let { c ->
+        AlertDialog(
+            onDismissRequest = { vm.credentials = null },
+            title = { Text("${c.count} new passwords created") },
+            text = { Text("This sheet has each student's number, name, program, respondent code and new password. It is not saved anywhere else, so share it now and keep it private (R.A. 10173).") },
+            confirmButton = {
+                Button(onClick = {
+                    val csv = "student_number,full_name,program,respondent_code,password\n" + c.rows.joinToString("\n") {
+                        "${it.studentNumber},\"${it.fullName}\",\"${it.program}\",${it.respondentCode ?: ""},${it.password}"
+                    }
+                    val send = Intent(Intent.ACTION_SEND).apply { type = "text/csv"; putExtra(Intent.EXTRA_SUBJECT, "votera_credentials.csv"); putExtra(Intent.EXTRA_TEXT, csv) }
+                    ctx.startActivity(Intent.createChooser(send, "Share credentials sheet"))
+                }) { Text("Share sheet (CSV)") }
+            },
+            dismissButton = { TextButton(onClick = { vm.credentials = null }) { Text("Close") } }
+        )
+    }
     if (confirmDemo) AlertDialog(
         onDismissRequest = { confirmDemo = false },
         title = { Text("Add sample votes?") },
@@ -285,6 +337,8 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
     var ach by remember { mutableStateOf(initial?.achievements ?: "") }
     var lead by remember { mutableStateOf(initial?.leadership ?: "") }
     var comm by remember { mutableStateOf(initial?.community ?: "") }
+    var video by remember { mutableStateOf(initial?.videoUrl ?: "") }
+    var qa by remember { mutableStateOf(initial?.qa ?: "") }
     var sa by remember { mutableStateOf(initial?.achievementsScore?.let { fmt(it) } ?: "") }
     var sl by remember { mutableStateOf(initial?.leadershipScore?.let { fmt(it) } ?: "") }
     var sc by remember { mutableStateOf(initial?.communityScore?.let { fmt(it) } ?: "") }
@@ -322,6 +376,10 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
                 OutlinedTextField(ach, { ach = it }, label = { Text("Verified achievements") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(lead, { lead = it }, label = { Text("Leadership experience") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(comm, { comm = it }, label = { Text("Community involvement") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(video, { video = it }, label = { Text("Platform video link (optional)") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(qa, { qa = it }, label = { Text("Questions and answers (optional)") }, minLines = 2,
+                    supportingText = { Text("Example: Q: Why are you running? A: To ...") }, modifier = Modifier.fillMaxWidth())
                 Text("Scores 0 to 100 (optional now, can be entered later)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val kb = KeyboardOptions(keyboardType = KeyboardType.Decimal)
@@ -343,7 +401,7 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
                     name.isBlank() -> error = "Enter the candidate's name"
                     bad -> error = "Scores must be numbers from 0 to 100"
                     else -> onSave(CandidateReq(name.trim(), program.trim(), position.trim(), manifesto.trim(), ach.trim(), lead.trim(), comm.trim(),
-                        score(sa), score(sl), score(sc)), photoBytes)
+                        score(sa), score(sl), score(sc), normalizeUrl(video), qa.trim().ifBlank { null }), photoBytes)
                 }
             }) { Text("Save") }
         },
@@ -429,7 +487,7 @@ fun AdminVoters(vm: AppVM) {
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(v.fullName, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text("${v.studentNumber} | ${v.program}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${v.studentNumber} | ${v.program}" + (v.respondentCode?.let { " | $it" } ?: ""), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text(if (v.hasVoted) "Voted" else "Not yet", fontSize = 12.sp,
                     color = if (v.hasVoted) GREEN else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
