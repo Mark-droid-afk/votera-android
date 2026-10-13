@@ -6,7 +6,16 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -90,6 +99,9 @@ class AppVM : ViewModel() {
     var liveState by mutableStateOf("off")  // live, reconnecting or off (off = refreshing every 15 seconds)
     var showReceipt by mutableStateOf(false)
     var showTutorial by mutableStateOf(false)
+    var comparePicked by mutableStateOf(listOf<Int>())  // kept here so the Compare tab remembers its choice when you switch tabs
+    var adminSub by mutableStateOf("overview")
+    var importResult by mutableStateOf<ImportRes?>(null)
     var needServer by mutableStateOf(false)  // set when login cannot reach the server, so the login screen offers the address field
     var receiptName by mutableStateOf<String?>(null)
 
@@ -237,7 +249,7 @@ class AppVM : ViewModel() {
         user = null; election = null; candidates = emptyList(); announcements = emptyList()
         results = null; voteStatus = null; flagged = emptyList(); otpToken = ""; devOtp = ""
         votes = emptyList(); voters = emptyList(); turnoutRows = emptyList()
-        showReceipt = false; receiptName = null; showTutorial = false
+        showReceipt = false; receiptName = null; showTutorial = false; importResult = null; comparePicked = emptyList(); adminSub = "overview"
         stage = "login"
     }
 
@@ -253,13 +265,15 @@ class AppVM : ViewModel() {
         announcements = Net.api.announcements()
         message = "Announcement posted"
     }
-    fun addCandidate(req: CandidateReq) = launchTask {
-        Net.api.addCandidate(req)
+    fun addCandidate(req: CandidateReq, photo: ByteArray?) = launchTask {
+        val c = Net.api.addCandidate(req)
+        if (photo != null) Net.api.uploadPhoto(c.id, jpegBody(photo))
         loadAll()
         message = "Candidate added. Similarity and credibility were recomputed."
     }
-    fun editCandidate(id: Int, req: CandidateReq) = launchTask {
+    fun editCandidate(id: Int, req: CandidateReq, photo: ByteArray?) = launchTask {
         Net.api.editCandidate(id, req)
+        if (photo != null) Net.api.uploadPhoto(id, jpegBody(photo))
         loadAll()
         message = "Candidate updated. Similarity and credibility were recomputed."
     }
@@ -267,6 +281,16 @@ class AppVM : ViewModel() {
         Net.api.deleteCandidate(id)
         loadAll()
         message = "Candidate removed"
+    }
+    fun removePhoto(id: Int) = launchTask {
+        Net.api.deletePhoto(id)
+        loadAll()
+        message = "Photo removed"
+    }
+    /** Sends the sheet (CSV text) to the server, which checks every row and reports what was added and what was skipped. */
+    fun importVoters(csv: String) = launchTask {
+        importResult = Net.api.importVoters(ImportReq(csv))
+        loadAll()
     }
     fun resetElection() = launchTask {
         val r = Net.api.resetElection()
@@ -336,7 +360,7 @@ fun initials(name: String) =
 
 @Composable
 fun Avatar(name: String, id: Int, size: Dp = 44.dp) {
-    Box(Modifier.size(size).clip(CircleShape).background(PALETTE[id % PALETTE.size]), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(size).clip(CircleShape).background(PALETTE[(id and Int.MAX_VALUE) % PALETTE.size]), contentAlignment = Alignment.Center) {
         Text(initials(name), color = Color.White, fontWeight = FontWeight.Bold, fontSize = (size.value / 3).sp)
     }
 }
@@ -450,6 +474,14 @@ fun SplashScreen() {
     }
 }
 
+/** How "deep" a screen is, so the transition knows whether to slide forward or back. */
+private fun screenDepth(s: String): Int = when {
+    s == "login" -> 0
+    s == "otp" -> 1
+    s.startsWith("tab:") -> 2
+    else -> 3
+}
+
 private data class TabDef(val id: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
 
 @Composable
@@ -479,7 +511,8 @@ fun AppShell(vm: AppVM) {
     Scaffold(
         snackbarHost = { SnackbarHost(snack) },
         topBar = {
-            if (vm.stage == "main" && !vm.showTutorial) TopAppBar(
+            AnimatedVisibility(visible = vm.stage == "main" && !vm.showTutorial,
+                enter = fadeIn(tween(250)) + expandVertically(tween(250)), exit = fadeOut(tween(150)) + shrinkVertically(tween(200))) { TopAppBar(
                 title = {
                     if (showSettings) Text("Settings", fontSize = 18.sp)
                     else Column {
@@ -500,10 +533,11 @@ fun AppShell(vm: AppVM) {
                         IconButton(onClick = { tab = "candidates"; detailId = null; vm.logout() }) { Icon(VIcons.Logout, contentDescription = "Log out") }
                     }
                 }
-            )
+            ) }
         },
         bottomBar = {
-            if (vm.stage == "main" && !vm.showTutorial) NavigationBar {
+            AnimatedVisibility(visible = vm.stage == "main" && !vm.showTutorial,
+                enter = fadeIn(tween(250)) + expandVertically(tween(250)), exit = fadeOut(tween(150)) + shrinkVertically(tween(200))) { NavigationBar {
                 tabs.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t.id && !showSettings,
@@ -518,26 +552,60 @@ fun AppShell(vm: AppVM) {
                             unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant)
                     )
                 }
-            }
+            } }
         }
     ) { pad ->
+        val tabIds = tabs.map { it.id }
+        // One name per screen. AnimatedContent slides and fades between them instead of swapping instantly.
+        val screen = when {
+            vm.stage == "login" -> "login"
+            vm.stage == "otp" -> "otp"
+            vm.showTutorial -> "tutorial"
+            showSettings -> "settings"
+            vm.showReceipt && vm.voteStatus?.hasVoted == true -> "receipt"
+            detailId != null && vm.candidates.any { it.id == detailId } -> "detail:$detailId"
+            else -> "tab:$tab"
+        }
         Box(Modifier.padding(pad).fillMaxSize()) {
-            when {
-                vm.stage == "login" -> LoginScreen(vm)
-                vm.stage == "otp" -> OtpScreen(vm)
-                vm.showTutorial -> TutorialScreen(isAdmin) { vm.user?.let { Prefs.markTutorial(it.studentNumber) }; vm.showTutorial = false }
-                showSettings -> SettingsScreen(vm)
-                vm.showReceipt && vm.voteStatus?.hasVoted == true ->
-                    ReceiptScreen(vm, onResults = { vm.showReceipt = false; tab = "results"; detailId = null }, onDone = { vm.showReceipt = false })
-                else -> {
-                    val detail = vm.candidates.firstOrNull { it.id == detailId }
-                    if (detail != null) CandidateDetail(detail, vm, onBack = { detailId = null }, onVote = { confirm = detail })
-                    else when (tab) {
-                        "candidates" -> CandidatesTab(vm) { detailId = it }
-                        "compare" -> CompareTab(vm)
-                        "updates" -> UpdatesTab(vm)
-                        "results" -> ResultsTab(vm)
-                        "admin" -> if (isAdmin) AdminTab(vm)
+            AnimatedContent(
+                targetState = screen, label = "screens", modifier = Modifier.fillMaxSize(),
+                transitionSpec = {
+                    val from = initialState
+                    val to = targetState
+                    if (from.startsWith("tab:") && to.startsWith("tab:")) {
+                        // Moving between tabs: slide a little in the direction of the tab.
+                        val dir = if (tabIds.indexOf(to.removePrefix("tab:")) >= tabIds.indexOf(from.removePrefix("tab:"))) 1 else -1
+                        (slideInHorizontally(tween(280)) { dir * it / 5 } + fadeIn(tween(240, delayMillis = 60))) togetherWith
+                            (slideOutHorizontally(tween(240)) { -dir * it / 5 } + fadeOut(tween(120)))
+                    } else if (screenDepth(to) > screenDepth(from)) {
+                        // Going deeper (open a candidate, settings, receipt): new screen slides in from the right.
+                        (slideInHorizontally(tween(300)) { it / 3 } + fadeIn(tween(260, delayMillis = 60))) togetherWith
+                            (slideOutHorizontally(tween(300)) { -it / 6 } + fadeOut(tween(140)))
+                    } else {
+                        // Going back: the reverse.
+                        (slideInHorizontally(tween(300)) { -it / 6 } + fadeIn(tween(260, delayMillis = 60))) togetherWith
+                            (slideOutHorizontally(tween(300)) { it / 3 } + fadeOut(tween(140)))
+                    }
+                }
+            ) { s ->
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    when {
+                        s == "login" -> LoginScreen(vm)
+                        s == "otp" -> OtpScreen(vm)
+                        s == "tutorial" -> TutorialScreen(isAdmin) { vm.user?.let { Prefs.markTutorial(it.studentNumber) }; vm.showTutorial = false }
+                        s == "settings" -> SettingsScreen(vm)
+                        s == "receipt" -> ReceiptScreen(vm, onResults = { vm.showReceipt = false; tab = "results"; detailId = null }, onDone = { vm.showReceipt = false })
+                        s.startsWith("detail:") -> {
+                            val detail = vm.candidates.firstOrNull { it.id == s.removePrefix("detail:").toIntOrNull() }
+                            if (detail != null) CandidateDetail(detail, vm, onBack = { detailId = null }, onVote = { confirm = detail })
+                        }
+                        else -> when (s.removePrefix("tab:")) {
+                            "candidates" -> CandidatesTab(vm) { detailId = it }
+                            "compare" -> CompareTab(vm)
+                            "updates" -> UpdatesTab(vm)
+                            "results" -> ResultsTab(vm)
+                            "admin" -> if (isAdmin) AdminTab(vm)
+                        }
                     }
                 }
             }
@@ -550,7 +618,7 @@ fun AppShell(vm: AppVM) {
             Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("Confirm your vote", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(c.fullName, c.id, 48.dp)
+                    CandidateAvatar(c, 56.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(c.fullName, fontWeight = FontWeight.Bold)
@@ -706,10 +774,10 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
             }
             if (vm.user?.role == "student") item { HowToVote(done = vm.voteStatus?.hasVoted == true, open = vm.election?.status == "open") }
             if (vm.candidates.isEmpty()) item { Empty(if (vm.refreshing || vm.busy) "Loading candidates..." else "No candidates yet.") }
-            items(vm.candidates) { c ->
+            items(vm.candidates, key = { it.id }) { c ->
                 Card(Modifier.fillMaxWidth().clickable { onOpen(c.id) }) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Avatar(c.fullName, c.id)
+                        CandidateAvatar(c, 56.dp)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(c.fullName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -737,7 +805,7 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = onBack) { Icon(VIcons.Back, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Back to candidates") }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Avatar(c.fullName, c.id, 56.dp)
+            CandidateAvatar(c, 80.dp)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(c.fullName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -819,13 +887,13 @@ fun ReceiptScreen(vm: AppVM, onResults: () -> Unit, onDone: () -> Unit) {
 // ---------------- Side-by-side comparison ----------------
 @Composable
 fun CompareTab(vm: AppVM) {
-    var picked by remember { mutableStateOf(listOf<Int>()) }
+    val picked = vm.comparePicked
     Column(Modifier.fillMaxSize().padding(top = 12.dp)) {
         Text("Select two or more candidates to compare side by side.", Modifier.padding(horizontal = 16.dp))
         LazyRow(contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(vm.candidates) { c ->
                 FilterChip(selected = c.id in picked,
-                    onClick = { picked = if (c.id in picked) picked - c.id else picked + c.id },
+                    onClick = { vm.comparePicked = if (c.id in picked) picked - c.id else picked + c.id },
                     label = { Text(c.fullName) })
             }
         }
@@ -837,6 +905,8 @@ fun CompareTab(vm: AppVM) {
                     Card(Modifier.width(260.dp).fillMaxHeight()) {
                         Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                CandidateAvatar(c, 44.dp)
+                                Spacer(Modifier.width(8.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(c.fullName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                     Text(c.program, fontSize = 13.sp)
@@ -863,7 +933,7 @@ fun UpdatesTab(vm: AppVM) {
     PullToRefreshBox(isRefreshing = vm.refreshing, onRefresh = { vm.refresh() }, modifier = Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (vm.announcements.isEmpty()) item { Empty("No announcements yet.") }
-            items(vm.announcements) { a ->
+            items(vm.announcements, key = { it.id }) { a ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
                         Text(a.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -898,13 +968,13 @@ fun PieChart(rows: List<ResultRowDto>) {
 }
 
 @Composable
-fun ResultRow(r: ResultRowDto, showBar: Boolean) {
+fun ResultRow(r: ResultRowDto, candidate: CandidateDto?, showBar: Boolean) {
     val color = PALETTE[r.candidateId % PALETTE.size]
     val p by animateFloatAsState((r.percent / 100).toFloat().coerceIn(0f, 1f), animationSpec = tween(600), label = "result")
     val leader = r.rank == 1 && r.votes > 0
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+            if (candidate != null) CandidateAvatar(candidate, 32.dp) else Box(Modifier.size(10.dp).clip(CircleShape).background(color))
             Spacer(Modifier.width(8.dp))
             Text("${r.rank}. ${r.fullName}", Modifier.weight(1f), fontWeight = if (leader) FontWeight.Bold else FontWeight.Normal)
             if (leader) {
@@ -949,7 +1019,7 @@ fun ResultsTab(vm: AppVM) {
                     FilterChip(selected = mode == "pie", onClick = { mode = "pie" }, label = { Text("Pie chart") })
                 }
                 if (mode == "pie") PieChart(res.results)
-                res.results.forEach { r -> ResultRow(r, showBar = mode == "bar") }
+                res.results.forEach { r -> ResultRow(r, vm.candidates.firstOrNull { it.id == r.candidateId }, showBar = mode == "bar") }
                 Text("Totals only. Individual choices are not shown to other students.", fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
