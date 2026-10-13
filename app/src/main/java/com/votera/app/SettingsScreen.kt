@@ -55,26 +55,26 @@ fun SettingsScreen(vm: AppVM) {
             Text("Theme", fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("system" to "System", "light" to "Light", "dark" to "Dark").forEach { (id, label) ->
-                    FilterChip(selected = Prefs.theme == id, onClick = { Prefs.setTheme(id) }, label = { Text(label) })
+                    FilterChip(selected = Prefs.theme == id, onClick = { Prefs.updateTheme(id) }, label = { Text(label) })
                 }
             }
             Text("Text size", fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(0.9f to "Small", 1.0f to "Default", 1.15f to "Large").forEach { (v, label) ->
-                    FilterChip(selected = Prefs.textScale == v, onClick = { Prefs.setTextScale(v) }, label = { Text(label) })
+                    FilterChip(selected = Prefs.textScale == v, onClick = { Prefs.updateTextScale(v) }, label = { Text(label) })
                 }
             }
         }
 
         Section("Updates") {
             SwitchRow("Live updates", "Votes, status and announcements appear on every device as they happen. If off, the app refreshes every 15 seconds.",
-                Prefs.live) { Prefs.setLive(it); vm.startLive() }
+                Prefs.live) { Prefs.updateLive(it); vm.startLive() }
             OutlinedButton(onClick = { vm.refresh() }, enabled = !vm.refreshing) { Text("Refresh now") }
         }
 
         if (vm.user?.role == "student") Section("Login") {
             SwitchRow("Remember my student number", "Fills in your student number on this phone. Your password is never saved.",
-                Prefs.rememberSn) { Prefs.setRememberSn(it) }
+                Prefs.rememberSn) { Prefs.updateRememberSn(it) }
         }
 
         Section("Help") {
