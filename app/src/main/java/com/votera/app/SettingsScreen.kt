@@ -2,6 +2,13 @@
 
 package com.votera.app
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -149,8 +156,8 @@ private val STUDENT_SLIDES = listOf(
 private val ADMIN_SLIDES = listOf(
     Slide(VIcons.Shield, "Welcome, administrator", "You run the simulated election. The Admin tab has four parts: Overview, Candidates, Vote audit and Voters."),
     Slide(VIcons.Bell, "Overview", "Open or close the election, watch turnout per program, post announcements, and review manifestos flagged at 70% similarity or higher."),
-    Slide(VIcons.People, "Candidates", "Add a candidate if one is missing, edit a manifesto, and enter the verified achievements, leadership and community scores from 0 to 100. Similarity and credibility are recalculated for everyone each time."),
-    Slide(VIcons.Bars, "Vote audit and voters", "The Vote audit shows who voted for whom. It is visible to administrators only and is confidential under R.A. 10173. Students only ever see totals. Voters shows who has and has not voted."),
+    Slide(VIcons.People, "Candidates", "Add a candidate with a photo if one is missing, edit a manifesto, and enter the verified achievements, leadership and community scores from 0 to 100. Similarity and credibility are recalculated for everyone each time."),
+    Slide(VIcons.Bars, "Vote audit and voters", "The Vote audit shows who voted for whom. It is visible to administrators only and is confidential under R.A. 10173. Students only ever see totals. In Voters you can see who has voted and add more students: upload a spreadsheet saved as CSV (the app shows the exact format) or add one student."),
     Slide(VIcons.Refresh, "Demo and reset", "Demo mode adds sample votes so the live charts can be shown. Reset election clears all votes and returns the status to Upcoming, ready for the next run.")
 )
 
@@ -165,15 +172,23 @@ fun TutorialScreen(isAdmin: Boolean, onFinish: () -> Unit) {
             Text("${i + 1} of ${slides.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (!last) TextButton(onClick = onFinish) { Text("Skip") }
         }
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Box(Modifier.size(96.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
-                Icon(s.icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
+        AnimatedContent(targetState = i, label = "tutorial", modifier = Modifier.weight(1f).fillMaxWidth(),
+            transitionSpec = {
+                val dir = if (targetState >= initialState) 1 else -1
+                (slideInHorizontally(tween(280)) { dir * it / 3 } + fadeIn(tween(240, delayMillis = 60))) togetherWith
+                    (slideOutHorizontally(tween(240)) { -dir * it / 3 } + fadeOut(tween(120)))
+            }) { idx ->
+            val sl = slides[idx]
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Box(Modifier.size(96.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                    Icon(sl.icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
+                }
+                Spacer(Modifier.height(28.dp))
+                Text(sl.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(12.dp))
+                Text(sl.body, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Spacer(Modifier.height(28.dp))
-            Text(s.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(12.dp))
-            Text(s.body, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.Center) {
             slides.indices.forEach { d ->
