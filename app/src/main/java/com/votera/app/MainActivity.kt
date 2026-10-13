@@ -617,8 +617,8 @@ fun LoginScreen(vm: AppVM) {
             keyboardActions = KeyboardActions(onDone = { submit() }),
             trailingIcon = { TextButton(onClick = { showPw = !showPw }) { Text(if (showPw) "Hide" else "Show") } },
             modifier = Modifier.fillMaxWidth())
-        if (!admin) Row(Modifier.clickable { Prefs.setRememberSn(!Prefs.rememberSn) }.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = Prefs.rememberSn, onCheckedChange = { Prefs.setRememberSn(it) })
+        if (!admin) Row(Modifier.clickable { Prefs.updateRememberSn(!Prefs.rememberSn) }.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = Prefs.rememberSn, onCheckedChange = { Prefs.updateRememberSn(it) })
             Text("Remember my student number", fontSize = 13.sp)
         }
         Spacer(Modifier.height(16.dp))
