@@ -28,6 +28,7 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
+import retrofit2.http.Query
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -86,6 +87,10 @@ object Prefs {
         private set
     var savedSn by mutableStateOf("")
         private set
+    var highContrast by mutableStateOf(false)    // stronger colors and borders for low vision
+        private set
+    var reduceMotion by mutableStateOf(false)    // no sliding transitions
+        private set
 
     fun init(context: Context) {
         val p = context.getSharedPreferences("votera_prefs", Context.MODE_PRIVATE)
@@ -95,11 +100,15 @@ object Prefs {
         live = p.getBoolean("live", true)
         rememberSn = p.getBoolean("remember_sn", false)
         savedSn = p.getString("saved_sn", "") ?: ""
+        highContrast = p.getBoolean("high_contrast", false)
+        reduceMotion = p.getBoolean("reduce_motion", false)
     }
 
     fun updateTheme(v: String) { theme = v; sp?.edit()?.putString("theme", v)?.apply() }
     fun updateTextScale(v: Float) { textScale = v; sp?.edit()?.putFloat("text_scale", v)?.apply() }
     fun updateLive(v: Boolean) { live = v; sp?.edit()?.putBoolean("live", v)?.apply() }
+    fun updateHighContrast(v: Boolean) { highContrast = v; sp?.edit()?.putBoolean("high_contrast", v)?.apply() }
+    fun updateReduceMotion(v: Boolean) { reduceMotion = v; sp?.edit()?.putBoolean("reduce_motion", v)?.apply() }
     fun updateRememberSn(v: Boolean) {
         rememberSn = v
         if (!v) savedSn = ""
@@ -116,7 +125,7 @@ object Prefs {
 
     /** Restores every setting, including the server address, to its default. */
     fun resetAll() {
-        updateTheme("system"); updateTextScale(1.0f); updateLive(true); updateRememberSn(false)
+        updateTheme("system"); updateTextScale(1.0f); updateLive(true); updateRememberSn(false); updateHighContrast(false); updateReduceMotion(false)
         ServerConfig.reset()
     }
 }
@@ -128,9 +137,10 @@ object Session { @Volatile var token: String? = null }
 data class LoginReq(val studentNumber: String, val password: String, val portal: String)
 data class LoginRes(val otpToken: String, val devOtp: String)
 data class OtpReq(val otpToken: String, val code: String)
-data class UserDto(val studentNumber: String, val fullName: String, val program: String, val role: String)
+data class UserDto(val studentNumber: String, val fullName: String, val program: String, val role: String, val respondentCode: String? = null)
 data class TokenRes(val accessToken: String, val user: UserDto)
-data class ElectionDto(val id: Int, val title: String, val status: String, val surveyUrl: String? = null)
+data class ElectionDto(val id: Int, val title: String, val status: String, val surveyUrl: String? = null,
+                       val closesAt: String? = null, val secondsLeft: Int? = null)
 data class StatusReq(val status: String)
 data class CandidateDto(
     val id: Int, val fullName: String, val program: String, val position: String,
@@ -139,12 +149,15 @@ data class CandidateDto(
     val achievementsScore: Double?, val leadershipScore: Double?, val communityScore: Double?,
     val credibilityScore: Double?,
     val mostSimilarName: String? = null,  // sent to administrators only
-    val photoVersion: Int = 0             // 0 = no photo; changes whenever the photo is replaced
+    val photoVersion: Int = 0,            // 0 = no photo; changes whenever the photo is replaced
+    val videoUrl: String? = null,         // optional link to a platform video
+    val qa: String? = null                // optional questions and answers (plain text)
 )
 data class CandidateReq(
     val fullName: String, val program: String, val position: String, val manifesto: String,
     val achievements: String, val leadership: String, val community: String,
-    val achievementsScore: Double?, val leadershipScore: Double?, val communityScore: Double?
+    val achievementsScore: Double?, val leadershipScore: Double?, val communityScore: Double?,
+    val videoUrl: String? = null, val qa: String? = null
 )
 data class ScoresReq(val achievementsScore: Double, val leadershipScore: Double, val communityScore: Double)
 data class FlaggedRes(val threshold: Double, val flagged: List<CandidateDto>)
@@ -162,17 +175,25 @@ data class VoteAuditDto(
     val studentNumber: String, val fullName: String, val program: String,
     val candidateId: Int, val candidateName: String, val transactionId: String, val castAt: String
 )
-data class VoterDto(val studentNumber: String, val fullName: String, val program: String, val hasVoted: Boolean, val votedAt: String?)
+data class VoterDto(val studentNumber: String, val fullName: String, val program: String, val hasVoted: Boolean, val votedAt: String?,
+                    val respondentCode: String? = null)
 data class TurnoutRowDto(val program: String, val eligible: Int, val voted: Int, val percent: Double)
 data class DeletedRes(val deleted: Int)
 data class ResetRes(val votesRemoved: Int, val status: String)
 data class DemoReq(val count: Int)
 data class DemoRes(val added: Int)
+data class ScheduleReq(val minutes: Int?)
+data class CredentialsReq(val program: String?)
+data class CredRow(val studentNumber: String, val fullName: String, val program: String, val respondentCode: String?, val password: String)
+data class CredentialsRes(val count: Int, val rows: List<CredRow>)
 data class ImportReq(val csv: String)
 data class ImportErr(val row: Int, val studentNumber: String, val reason: String)
 data class GeneratedPw(val studentNumber: String, val fullName: String, val password: String)
 data class ImportRes(val created: Int, val skipped: Int, val errors: List<ImportErr>, val generated: List<GeneratedPw>)
 data class HealthRes(val status: String, val election: String?)
+data class AuditDto(val id: Int, val at: String, val actor: String, val role: String, val action: String, val detail: String, val ok: Boolean)
+data class SelfCheckDto(val group: String, val name: String, val ok: Boolean, val detail: String)
+data class SelfTestRes(val passed: Int, val total: Int, val checks: List<SelfCheckDto>)
 
 interface VoteraApi {
     @GET("health") suspend fun health(): HealthRes
@@ -188,7 +209,11 @@ interface VoteraApi {
     @GET("candidates/{id}/photo") suspend fun photo(@Path("id") id: Int): ResponseBody
     @PUT("admin/candidates/{id}/photo") suspend fun uploadPhoto(@Path("id") id: Int, @Body body: RequestBody): CandidateDto
     @DELETE("admin/candidates/{id}/photo") suspend fun deletePhoto(@Path("id") id: Int): CandidateDto
+    @PUT("admin/election/schedule") suspend fun setSchedule(@Body b: ScheduleReq): ElectionDto
+    @POST("admin/credentials/regenerate") suspend fun regenerateCredentials(@Body b: CredentialsReq): CredentialsRes
     @POST("admin/voters/import") suspend fun importVoters(@Body b: ImportReq): ImportRes
+    @GET("admin/audit-log") suspend fun auditLog(@Query("limit") limit: Int, @Query("only_problems") onlyProblems: Boolean): List<AuditDto>
+    @GET("admin/selftest") suspend fun selfTest(): SelfTestRes
     @GET("admin/flagged") suspend fun flagged(): FlaggedRes
     @GET("admin/votes") suspend fun votes(): List<VoteAuditDto>
     @GET("admin/voters") suspend fun voters(): List<VoterDto>
@@ -206,7 +231,7 @@ interface VoteraApi {
 object Net {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)  // long enough for the credentials sheet (hashes up to 250 passwords)
         .addInterceptor { chain ->  // attaches the JWT to every request
             val b = chain.request().newBuilder()
             Session.token?.let { b.header("Authorization", "Bearer $it") }
