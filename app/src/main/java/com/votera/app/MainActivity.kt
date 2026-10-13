@@ -3,6 +3,7 @@
 package com.votera.app
 
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -25,6 +26,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -45,7 +47,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
@@ -101,9 +108,24 @@ class AppVM : ViewModel() {
     var showTutorial by mutableStateOf(false)
     var comparePicked by mutableStateOf(listOf<Int>())  // kept here so the Compare tab remembers its choice when you switch tabs
     var adminSub by mutableStateOf("overview")
+    var candidateQuery by mutableStateOf("")
+    var candidateSort by mutableStateOf("default")  // default, name or credibility
+    var deadline by mutableStateOf<Long?>(null)      // when voting closes automatically, on this phone's clock (elapsedRealtime)
+    var credentials by mutableStateOf<CredentialsRes?>(null)
     var importResult by mutableStateOf<ImportRes?>(null)
     var needServer by mutableStateOf(false)  // set when login cannot reach the server, so the login screen offers the address field
     var receiptName by mutableStateOf<String?>(null)
+    var loaded by mutableStateOf(false)               // true after the first full load, so lists show placeholders instead of "empty" while loading
+    var offline by mutableStateOf(false)              // last background refresh could not reach the server
+    var banner by mutableStateOf<AnnouncementDto?>(null)  // a new announcement that just arrived (students)
+    var matchMode by mutableStateOf(false)            // Compare tab: false = side by side, true = "Match me"
+    var priorities by mutableStateOf(listOf(5f, 5f, 5f, 5f))  // Match me: originality, achievements, leadership, community (0 to 10)
+    var auditLog by mutableStateOf<List<AuditDto>>(emptyList())
+    var auditOnlyProblems by mutableStateOf(false)
+    var selfTest by mutableStateOf<SelfTestRes?>(null)
+    var selfTesting by mutableStateOf(false)
+    var candidatesListState = LazyListState()         // remembers where you were in the candidate list
+    private var knownAnnouncements: Set<Int>? = null
 
     private var liveJob: Job? = null
     private var pollJob: Job? = null
@@ -130,11 +152,21 @@ class AppVM : ViewModel() {
         }
     }
 
+    /** Keeps the election and its automatic closing time together. The server sends seconds_left, so phone clock errors do not matter. */
+    private fun applyElection(e: ElectionDto) {
+        election = e
+        deadline = e.secondsLeft?.let { SystemClock.elapsedRealtime() + it * 1000L }
+    }
+
     private suspend fun loadAll() {
         val api = Net.api
-        election = api.election()
+        applyElection(api.election())
         candidates = api.candidates()
-        announcements = api.announcements()
+        val fresh = api.announcements()
+        val seen = knownAnnouncements
+        if (seen != null && user?.role == "student") fresh.firstOrNull { it.id !in seen }?.let { banner = it }
+        knownAnnouncements = fresh.map { it.id }.toSet()
+        announcements = fresh
         results = api.results()
         if (user?.role == "student") voteStatus = api.voteStatus()
         if (user?.role == "admin") {
@@ -143,6 +175,8 @@ class AppVM : ViewModel() {
             voters = api.voters()
             turnoutRows = api.turnoutByProgram()
         }
+        loaded = true
+        offline = false
     }
 
     /** portal is "student" or "admin": the login screen the person used. The server rejects a mismatch. */
@@ -190,6 +224,7 @@ class AppVM : ViewModel() {
                     catch (e: CancellationException) { throw e }
                     catch (t: Throwable) {
                         if (t is HttpException && t.code() == 401) { handleError(t); return@launch }
+                        if (t is IOException) offline = true
                     }
                 } while (syncAgain && stage == "main")
             } finally { syncing = false }
@@ -249,12 +284,23 @@ class AppVM : ViewModel() {
         user = null; election = null; candidates = emptyList(); announcements = emptyList()
         results = null; voteStatus = null; flagged = emptyList(); otpToken = ""; devOtp = ""
         votes = emptyList(); voters = emptyList(); turnoutRows = emptyList()
-        showReceipt = false; receiptName = null; showTutorial = false; importResult = null; comparePicked = emptyList(); adminSub = "overview"
+        showReceipt = false; receiptName = null; showTutorial = false; importResult = null; credentials = null; deadline = null; candidateQuery = ""; candidateSort = "default"; comparePicked = emptyList(); adminSub = "overview"
+        loaded = false; offline = false; banner = null; knownAnnouncements = null; matchMode = false; priorities = listOf(5f, 5f, 5f, 5f)
+        auditLog = emptyList(); auditOnlyProblems = false; selfTest = null; selfTesting = false; candidatesListState = LazyListState()
         stage = "login"
     }
 
     // Admin
-    fun setStatus(status: String) = launchTask { election = Net.api.setStatus(StatusReq(status)); loadAll() }
+    fun setStatus(status: String) = launchTask { applyElection(Net.api.setStatus(StatusReq(status))); loadAll() }
+    /** minutes = null clears the automatic closing time. */
+    fun setSchedule(minutes: Int?) = launchTask {
+        applyElection(Net.api.setSchedule(ScheduleReq(minutes)))
+        message = if (minutes == null) "Automatic closing time cleared" else "Voting will close automatically in $minutes minutes"
+    }
+    /** Creates new passwords for every student (or one program) and keeps the sheet so it can be shared once. */
+    fun regenerateCredentials(program: String?) = launchTask {
+        credentials = Net.api.regenerateCredentials(CredentialsReq(program))
+    }
     fun saveScores(id: Int, a: Double, l: Double, c: Double) = launchTask {
         Net.api.setScores(id, ScoresReq(a, l, c))
         loadAll()
@@ -291,6 +337,24 @@ class AppVM : ViewModel() {
     fun importVoters(csv: String) = launchTask {
         importResult = Net.api.importVoters(ImportReq(csv))
         loadAll()
+    }
+    /** Loads the read-only activity log (logins, failed attempts, status changes, votes cast without their choice). */
+    fun loadAudit() {
+        viewModelScope.launch {
+            try { auditLog = Net.api.auditLog(150, auditOnlyProblems) }
+            catch (e: CancellationException) { throw e }
+            catch (t: Throwable) { if (t is HttpException && t.code() == 401) handleError(t) }
+        }
+    }
+    /** Runs the server's self-test of the Chapter 3 methods on known inputs. */
+    fun runSelfTest() {
+        viewModelScope.launch {
+            selfTesting = true
+            try { selfTest = Net.api.selfTest() }
+            catch (e: CancellationException) { throw e }
+            catch (t: Throwable) { handleError(t) }
+            finally { selfTesting = false }
+        }
     }
     fun resetElection() = launchTask {
         val r = Net.api.resetElection()
@@ -336,6 +400,27 @@ private val DarkColors = darkColorScheme(
     onBackground = Color(0xFFEDE0E2), onSurface = Color(0xFFEDE0E2),
     surfaceVariant = Color(0xFF3A3234), onSurfaceVariant = Color(0xFFCFC3C6),
     surfaceContainer = Color(0xFF1F191B), surfaceContainerHighest = Color(0xFF2A2325)
+)
+
+// High-contrast variants (Settings > Accessibility): pure black or white backgrounds, darker accent, stronger text.
+private val HighLight = lightColorScheme(
+    primary = Color(0xFF4A0519), onPrimary = Color.White,
+    primaryContainer = Color(0xFFEAD0D8), onPrimaryContainer = Color.Black,
+    secondary = Color(0xFF7A5200), background = Color.White, surface = Color.White,
+    onBackground = Color.Black, onSurface = Color.Black,
+    surfaceVariant = Color(0xFFC9C0C2), onSurfaceVariant = Color(0xFF1F1A1B),
+    surfaceContainer = Color(0xFFF2F2F2), surfaceContainerHighest = Color(0xFFE6E6E6),
+    error = Color(0xFF8C0009), errorContainer = Color(0xFFFFD6D6), onErrorContainer = Color.Black, outline = Color.Black
+)
+
+private val HighDark = darkColorScheme(
+    primary = Color(0xFFFFB3C6), onPrimary = Color.Black,
+    primaryContainer = Color(0xFF5A1429), onPrimaryContainer = Color.White,
+    secondary = GOLD, background = Color.Black, surface = Color.Black,
+    onBackground = Color.White, onSurface = Color.White,
+    surfaceVariant = Color(0xFF4A4244), onSurfaceVariant = Color(0xFFF5F5F5),
+    surfaceContainer = Color(0xFF121212), surfaceContainerHighest = Color(0xFF242424),
+    error = Color(0xFFFFB4AB), errorContainer = Color(0xFF7A0010), onErrorContainer = Color.White, outline = Color.White
 )
 
 class MainActivity : ComponentActivity() {
@@ -404,6 +489,18 @@ fun LiveBadge(state: String) {
     }
 }
 
+/** "Voting closes in 01:23:45", counting down every second. Null when no closing time is set. */
+@Composable
+fun countdownText(deadline: Long?): String? {
+    var now by remember(deadline) { mutableStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(deadline) { if (deadline != null) while (true) { now = SystemClock.elapsedRealtime(); delay(1000) } }
+    if (deadline == null) return null
+    val left = ((deadline - now) / 1000).coerceAtLeast(0)
+    if (left == 0L) return "Time is up. Voting is closing."
+    val h = left / 3600; val m = (left % 3600) / 60; val sec = left % 60
+    return "Voting closes in " + (if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec))
+}
+
 /** Credibility score as a ring, 0 to 100. */
 @Composable
 fun CredRing(score: Double?, diameter: Dp, stroke: Dp = 5.dp) {
@@ -411,7 +508,7 @@ fun CredRing(score: Double?, diameter: Dp, stroke: Dp = 5.dp) {
     val p by animateFloatAsState(target, animationSpec = tween(700), label = "ring")
     val track = MaterialTheme.colorScheme.surfaceVariant
     val color = MaterialTheme.colorScheme.primary
-    Box(Modifier.size(diameter), contentAlignment = Alignment.Center) {
+    Box(Modifier.size(diameter).clearAndSetSemantics { contentDescription = "Credibility score ${fmt0(score)} out of 100" }, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
             val s = stroke.toPx()
             val box = Size(this.size.width - s, this.size.height - s)
@@ -455,7 +552,7 @@ fun VoteraApp(vm: AppVM = viewModel()) {
     val base = LocalDensity.current
     // Text size setting multiplies the phone's own font scale.
     CompositionLocalProvider(LocalDensity provides Density(base.density, base.fontScale * Prefs.textScale)) {
-        MaterialTheme(colorScheme = if (dark) DarkColors else LightColors) {
+        MaterialTheme(colorScheme = when { dark && Prefs.highContrast -> HighDark; dark -> DarkColors; Prefs.highContrast -> HighLight; else -> LightColors }) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 var splash by remember { mutableStateOf(true) }
                 LaunchedEffect(Unit) { delay(1100); splash = false }
@@ -491,6 +588,7 @@ fun AppShell(vm: AppVM) {
     var detailId by remember { mutableStateOf<Int?>(null) }
     var confirm by remember { mutableStateOf<CandidateDto?>(null) }
     var showSettings by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
     val isAdmin = vm.user?.role == "admin"
     val tabs = buildList {
         add(TabDef("candidates", "Candidates", VIcons.People))
@@ -501,6 +599,8 @@ fun AppShell(vm: AppVM) {
     }
 
     LaunchedEffect(vm.message) { vm.message?.let { snack.showSnackbar(it); vm.message = null } }
+    // A new-announcement banner hides itself after a few seconds.
+    LaunchedEffect(vm.banner) { if (vm.banner != null) { delay(8000); vm.banner = null } }
     // Administrators land on the Admin tab; students (and a logged-out app) land on Candidates.
     LaunchedEffect(vm.user?.role) { tab = if (vm.user?.role == "admin") "admin" else "candidates"; detailId = null; showSettings = false }
     BackHandler(enabled = vm.stage == "main" && showSettings) { showSettings = false }
@@ -570,6 +670,7 @@ fun AppShell(vm: AppVM) {
             AnimatedContent(
                 targetState = screen, label = "screens", modifier = Modifier.fillMaxSize(),
                 transitionSpec = {
+                    if (Prefs.reduceMotion) fadeIn(tween(1)) togetherWith fadeOut(tween(1)) else {
                     val from = initialState
                     val to = targetState
                     if (from.startsWith("tab:") && to.startsWith("tab:")) {
@@ -585,6 +686,7 @@ fun AppShell(vm: AppVM) {
                         // Going back: the reverse.
                         (slideInHorizontally(tween(300)) { -it / 6 } + fadeIn(tween(260, delayMillis = 60))) togetherWith
                             (slideOutHorizontally(tween(300)) { it / 3 } + fadeOut(tween(140)))
+                    }
                     }
                 }
             ) { s ->
@@ -609,6 +711,16 @@ fun AppShell(vm: AppVM) {
                     }
                 }
             }
+            Column(Modifier.align(Alignment.TopCenter)) {
+                AnimatedVisibility(visible = vm.stage == "main" && vm.offline && !vm.showTutorial) {
+                    InfoBanner("No connection", "Showing the last information loaded. It updates again when the connection returns.", null, {}, null, warn = true)
+                }
+                val b = vm.banner
+                AnimatedVisibility(visible = vm.stage == "main" && b != null && !vm.showTutorial) {
+                    if (b != null) InfoBanner("New announcement: ${b.title}", b.body, "View",
+                        { tab = "updates"; detailId = null; showSettings = false; vm.showReceipt = false; vm.banner = null }, { vm.banner = null })
+                }
+            }
             if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         }
     }
@@ -630,7 +742,7 @@ fun AppShell(vm: AppVM) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(onClick = { confirm = null }, modifier = Modifier.weight(1f)) { Text("Cancel") }
-                    Button(onClick = { vm.vote(c); confirm = null }, modifier = Modifier.weight(1f)) { Text("Confirm vote") }
+                    Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.vote(c); confirm = null }, modifier = Modifier.weight(1f)) { Text("Confirm vote") }
                 }
             }
         }
@@ -719,6 +831,8 @@ fun LoginScreen(vm: AppVM) {
 @Composable
 fun OtpScreen(vm: AppVM) {
     var code by remember { mutableStateOf("") }
+    // Verifies by itself as soon as the sixth digit is in. A wrong code stays in the box so it can be corrected.
+    LaunchedEffect(code) { if (code.length == 6 && !vm.busy) vm.verifyOtp(code) }
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
         Text("Enter your one-time password", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
@@ -727,6 +841,7 @@ fun OtpScreen(vm: AppVM) {
                 Text("Simulated OTP delivery (prototype)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
                 Text(vm.devOtp, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer)
+                TextButton(onClick = { code = vm.devOtp }) { Text("Fill in this code for me") }
             }
         }
         Text("Step 2 of 2. Logging in needs a 6-digit code as a second check. A real system would send it by SMS or email. " +
@@ -750,7 +865,7 @@ fun OtpScreen(vm: AppVM) {
 @Composable
 fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
     PullToRefreshBox(isRefreshing = vm.refreshing, onRefresh = { vm.refresh() }, modifier = Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), state = vm.candidatesListState, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item {
                 val e = vm.election
                 val vs = vm.voteStatus
@@ -762,6 +877,9 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                             StatusPill(e?.status ?: "closed")
                         }
                         vm.user?.let { Text("Signed in as ${it.fullName} (${it.studentNumber})", fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer) }
+                        if (e?.status == "open") countdownText(vm.deadline)?.let {
+                            Text(it, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
                         if (vs?.hasVoted == true) Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("You have voted. Transaction ID: ${vs.transactionId?.take(16)}...", fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.weight(1f))
@@ -773,8 +891,33 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                 }
             }
             if (vm.user?.role == "student") item { HowToVote(done = vm.voteStatus?.hasVoted == true, open = vm.election?.status == "open") }
-            if (vm.candidates.isEmpty()) item { Empty(if (vm.refreshing || vm.busy) "Loading candidates..." else "No candidates yet.") }
-            items(vm.candidates, key = { it.id }) { c ->
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedTextField(vm.candidateQuery, { vm.candidateQuery = it }, placeholder = { Text("Search by name, program or position") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Sort:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        listOf("default" to "Default", "name" to "Name A to Z", "credibility" to "Credibility").forEach { (id, label) ->
+                            FilterChip(selected = vm.candidateSort == id, onClick = { vm.candidateSort = id }, label = { Text(label, fontSize = 12.sp) })
+                        }
+                    }
+                }
+            }
+            val q = vm.candidateQuery.trim()
+            val shown = vm.candidates
+                .filter { q.isEmpty() || it.fullName.contains(q, true) || it.program.contains(q, true) || it.position.contains(q, true) }
+                .let { list ->
+                    when (vm.candidateSort) {
+                        "name" -> list.sortedBy { it.fullName }
+                        "credibility" -> list.sortedByDescending { it.credibilityScore ?: -1.0 }
+                        else -> list
+                    }
+                }
+            if (shown.isEmpty()) {
+                if (!vm.loaded) items(3) { SkeletonCard() }
+                else item { Empty(if (vm.candidates.isEmpty()) "No candidates yet." else "No candidate matches your search.") }
+            }
+            items(shown, key = { it.id }) { c ->
                 Card(Modifier.fillMaxWidth().clickable { onOpen(c.id) }) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         CandidateAvatar(c, 56.dp)
@@ -824,6 +967,11 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
         Block("Verified achievements", c.achievements)
         Block("Leadership experience", c.leadership)
         Block("Community involvement", c.community)
+        if (!c.qa.isNullOrBlank()) Block("Questions and answers", c.qa)
+        if (!c.videoUrl.isNullOrBlank()) {
+            val uri = LocalUriHandler.current
+            OutlinedButton(onClick = { runCatching { uri.openUri(c.videoUrl) } }, modifier = Modifier.fillMaxWidth()) { Text("Watch platform video") }
+        }
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Credibility score breakdown", style = MaterialTheme.typography.titleMedium)
@@ -857,6 +1005,7 @@ fun ReceiptScreen(vm: AppVM, onResults: () -> Unit, onDone: () -> Unit) {
     val tx = vm.voteStatus?.transactionId.orEmpty()
     val clip = LocalClipboardManager.current
     val uri = LocalUriHandler.current
+    val ctx = LocalContext.current
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)) {
         Box(Modifier.size(72.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
@@ -864,6 +1013,7 @@ fun ReceiptScreen(vm: AppVM, onResults: () -> Unit, onDone: () -> Unit) {
         }
         Text("Vote recorded", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         vm.receiptName?.let { Text("You voted for $it") }
+        vm.user?.respondentCode?.let { Text("Your respondent code: $it. Write it on the post-pilot survey.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Transaction ID", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
@@ -880,6 +1030,7 @@ fun ReceiptScreen(vm: AppVM, onResults: () -> Unit, onDone: () -> Unit) {
         vm.election?.surveyUrl?.let { link ->
             OutlinedButton(onClick = { uri.openUri(link) }, modifier = Modifier.fillMaxWidth()) { Text("Open the post-pilot survey") }
         }
+        OutlinedButton(onClick = { printHtml(ctx, "VotEra vote receipt", receiptHtml(vm)) }, modifier = Modifier.fillMaxWidth()) { Text("Print or save as PDF") }
         TextButton(onClick = onDone) { Text("Done") }
     }
 }
@@ -887,6 +1038,17 @@ fun ReceiptScreen(vm: AppVM, onResults: () -> Unit, onDone: () -> Unit) {
 // ---------------- Side-by-side comparison ----------------
 @Composable
 fun CompareTab(vm: AppVM) {
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.padding(horizontal = 16.dp).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = !vm.matchMode, onClick = { vm.matchMode = false }, label = { Text("Side by side") })
+            FilterChip(selected = vm.matchMode, onClick = { vm.matchMode = true }, label = { Text("Match me") })
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) { if (vm.matchMode) MatchMe(vm) else SideBySide(vm) }
+    }
+}
+
+@Composable
+private fun SideBySide(vm: AppVM) {
     val picked = vm.comparePicked
     Column(Modifier.fillMaxSize().padding(top = 12.dp)) {
         Text("Select two or more candidates to compare side by side.", Modifier.padding(horizontal = 16.dp))
