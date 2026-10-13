@@ -10,8 +10,11 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.ResponseBody
 import okhttp3.WebSocket
@@ -135,7 +138,8 @@ data class CandidateDto(
     val highestSimilarity: Double?, val originalityScore: Double?, val flagged: Boolean,
     val achievementsScore: Double?, val leadershipScore: Double?, val communityScore: Double?,
     val credibilityScore: Double?,
-    val mostSimilarName: String? = null  // sent to administrators only
+    val mostSimilarName: String? = null,  // sent to administrators only
+    val photoVersion: Int = 0             // 0 = no photo; changes whenever the photo is replaced
 )
 data class CandidateReq(
     val fullName: String, val program: String, val position: String, val manifesto: String,
@@ -164,6 +168,10 @@ data class DeletedRes(val deleted: Int)
 data class ResetRes(val votesRemoved: Int, val status: String)
 data class DemoReq(val count: Int)
 data class DemoRes(val added: Int)
+data class ImportReq(val csv: String)
+data class ImportErr(val row: Int, val studentNumber: String, val reason: String)
+data class GeneratedPw(val studentNumber: String, val fullName: String, val password: String)
+data class ImportRes(val created: Int, val skipped: Int, val errors: List<ImportErr>, val generated: List<GeneratedPw>)
 data class HealthRes(val status: String, val election: String?)
 
 interface VoteraApi {
@@ -177,6 +185,10 @@ interface VoteraApi {
     @POST("admin/candidates") suspend fun addCandidate(@Body b: CandidateReq): CandidateDto
     @PUT("admin/candidates/{id}") suspend fun editCandidate(@Path("id") id: Int, @Body b: CandidateReq): CandidateDto
     @DELETE("admin/candidates/{id}") suspend fun deleteCandidate(@Path("id") id: Int): DeletedRes
+    @GET("candidates/{id}/photo") suspend fun photo(@Path("id") id: Int): ResponseBody
+    @PUT("admin/candidates/{id}/photo") suspend fun uploadPhoto(@Path("id") id: Int, @Body body: RequestBody): CandidateDto
+    @DELETE("admin/candidates/{id}/photo") suspend fun deletePhoto(@Path("id") id: Int): CandidateDto
+    @POST("admin/voters/import") suspend fun importVoters(@Body b: ImportReq): ImportRes
     @GET("admin/flagged") suspend fun flagged(): FlaggedRes
     @GET("admin/votes") suspend fun votes(): List<VoteAuditDto>
     @GET("admin/voters") suspend fun voters(): List<VoterDto>
@@ -262,3 +274,5 @@ fun errorMessage(t: Throwable): String = when (t) {
     is IOException -> "Cannot reach the server at ${ServerConfig.baseUrl}. Check your connection and the server address."
     else -> t.message ?: "Something went wrong"
 }
+
+fun jpegBody(bytes: ByteArray): RequestBody = bytes.toRequestBody("image/jpeg".toMediaType())
