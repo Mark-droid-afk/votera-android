@@ -67,10 +67,16 @@ fun SettingsScreen(vm: AppVM) {
             }
             Text("Text size", fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(0.9f to "Small", 1.0f to "Default", 1.15f to "Large").forEach { (v, label) ->
+                listOf(0.9f to "Small", 1.0f to "Default", 1.15f to "Large", 1.3f to "Extra large").forEach { (v, label) ->
                     FilterChip(selected = Prefs.textScale == v, onClick = { Prefs.updateTextScale(v) }, label = { Text(label) })
                 }
             }
+        }
+
+        Section("Accessibility") {
+            SwitchRow("High contrast", "Stronger colors and text for easier reading in bright light or with low vision.",
+                Prefs.highContrast) { Prefs.updateHighContrast(it) }
+            SwitchRow("Reduce motion", "Screens change without sliding animations.", Prefs.reduceMotion) { Prefs.updateReduceMotion(it) }
         }
 
         Section("Updates") {
@@ -82,6 +88,11 @@ fun SettingsScreen(vm: AppVM) {
         if (vm.user?.role == "student") Section("Login") {
             SwitchRow("Remember my student number", "Fills in your student number on this phone. Your password is never saved.",
                 Prefs.rememberSn) { Prefs.updateRememberSn(it) }
+            vm.user?.respondentCode?.let {
+                Text("Your respondent code: $it", fontWeight = FontWeight.Medium)
+                Text("Write this code on the post-pilot survey so your two answers can be matched without using your name.", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
 
         Section("Help") {
@@ -136,7 +147,7 @@ fun SettingsScreen(vm: AppVM) {
     if (confirmReset) AlertDialog(
         onDismissRequest = { confirmReset = false },
         title = { Text("Reset settings?") },
-        text = { Text("Theme, text size, live updates and the server address go back to their defaults.") },
+        text = { Text("Theme, text size, accessibility options, live updates and the server address go back to their defaults.") },
         confirmButton = { TextButton(onClick = { Prefs.resetAll(); server = ServerConfig.baseUrl; vm.startLive(); confirmReset = false }) { Text("Reset") } },
         dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Cancel") } }
     )
@@ -147,18 +158,18 @@ private data class Slide(val icon: ImageVector, val title: String, val body: Str
 
 private val STUDENT_SLIDES = listOf(
     Slide(VIcons.Shield, "Welcome to VotEra", "This is a simulated Supreme Student Council election for a research study at PUP Quezon City. The candidates and data are fictional."),
-    Slide(VIcons.People, "Read the candidates", "Open the Candidates tab and tap a candidate to read the platform. Use the Compare tab to place two or more candidates side by side."),
+    Slide(VIcons.People, "Read the candidates", "Open the Candidates tab and tap a candidate to read the platform. Use the Compare tab to place candidates side by side, or try Match me to see who fits the qualities you care about most (a guide only, not a vote)."),
     Slide(VIcons.Bars, "Understand the credibility score", "Each candidate has a score from 0 to 100: originality 35%, verified achievements 30%, leadership 20%, community 15%. A flag means a manifesto is very similar to another and is under review. It does not disqualify anyone."),
     Slide(VIcons.Check, "Vote once", "Open a candidate, tap Vote, then confirm. Each student can vote once and a vote cannot be changed. You get a receipt with a transaction ID."),
     Slide(VIcons.Bell, "Follow the results", "The Results tab shows turnout and totals, updating live on every device. Other students' individual votes are never shown. Announcements are in the Updates tab.")
 )
 
 private val ADMIN_SLIDES = listOf(
-    Slide(VIcons.Shield, "Welcome, administrator", "You run the simulated election. The Admin tab has four parts: Overview, Candidates, Vote audit and Voters."),
-    Slide(VIcons.Bell, "Overview", "Open or close the election, watch turnout per program, post announcements, and review manifestos flagged at 70% similarity or higher."),
+    Slide(VIcons.Shield, "Welcome, administrator", "You run the simulated election. The Admin tab has seven parts: Overview, Candidates, Vote audit, Voters, Report, Activity and Self-test."),
+    Slide(VIcons.Bell, "Overview", "Open or close the election (or set a time for it to close by itself), watch turnout per program, post announcements, and review manifestos flagged at 70% similarity or higher."),
     Slide(VIcons.People, "Candidates", "Add a candidate with a photo if one is missing, edit a manifesto, and enter the verified achievements, leadership and community scores from 0 to 100. Similarity and credibility are recalculated for everyone each time."),
     Slide(VIcons.Bars, "Vote audit and voters", "The Vote audit shows who voted for whom. It is visible to administrators only and is confidential under R.A. 10173. Students only ever see totals. In Voters you can see who has voted and add more students: upload a spreadsheet saved as CSV (the app shows the exact format) or add one student."),
-    Slide(VIcons.Refresh, "Demo and reset", "Demo mode adds sample votes so the live charts can be shown. Reset election clears all votes and returns the status to Upcoming, ready for the next run.")
+    Slide(VIcons.Refresh, "Report, demo and reset", "The Report tab summarizes the election for your paper and can be shared as text. Demo mode adds sample votes so the live charts can be shown. The credentials sheet makes new passwords to hand out. Reset election clears all votes and returns the status to Upcoming. Activity is a read-only log of sign-ins, failed attempts and admin actions. Self-test checks the hashing, OTP, tally, sorting and credibility methods on sample data. Five wrong passwords lock an account for 5 minutes.")
 )
 
 @Composable
