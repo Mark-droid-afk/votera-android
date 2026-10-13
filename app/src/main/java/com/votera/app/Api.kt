@@ -94,10 +94,10 @@ object Prefs {
         savedSn = p.getString("saved_sn", "") ?: ""
     }
 
-    fun setTheme(v: String) { theme = v; sp?.edit()?.putString("theme", v)?.apply() }
-    fun setTextScale(v: Float) { textScale = v; sp?.edit()?.putFloat("text_scale", v)?.apply() }
-    fun setLive(v: Boolean) { live = v; sp?.edit()?.putBoolean("live", v)?.apply() }
-    fun setRememberSn(v: Boolean) {
+    fun updateTheme(v: String) { theme = v; sp?.edit()?.putString("theme", v)?.apply() }
+    fun updateTextScale(v: Float) { textScale = v; sp?.edit()?.putFloat("text_scale", v)?.apply() }
+    fun updateLive(v: Boolean) { live = v; sp?.edit()?.putBoolean("live", v)?.apply() }
+    fun updateRememberSn(v: Boolean) {
         rememberSn = v
         if (!v) savedSn = ""
         sp?.edit()?.putBoolean("remember_sn", v)?.putString("saved_sn", if (v) savedSn else "")?.apply()
@@ -113,7 +113,7 @@ object Prefs {
 
     /** Restores every setting, including the server address, to its default. */
     fun resetAll() {
-        setTheme("system"); setTextScale(1.0f); setLive(true); setRememberSn(false)
+        updateTheme("system"); updateTextScale(1.0f); updateLive(true); updateRememberSn(false)
         ServerConfig.reset()
     }
 }
