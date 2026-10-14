@@ -33,9 +33,10 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
-// Default server address. Emulator: http://10.0.2.2:8000/ . Real phone: your laptop's Wi-Fi IP.
-// It can also be changed on the login screen or in Settings (Server address) without rebuilding the app.
-const val BASE_URL = "http://192.168.1.12:8000/"
+// Default server address: the hosted VotEra backend. For local testing use http://10.0.2.2:8000/ (emulator)
+// or your laptop's Wi-Fi IP. It can also be changed on the login screen (tap the logo 5 times) or in Settings
+// (Server address) without rebuilding the app.
+const val BASE_URL = "https://votera-backend.onrender.com/"
 
 /** Holds the server address the app talks to. The saved address on the phone overrides BASE_URL. */
 object ServerConfig {
