@@ -122,6 +122,8 @@ class AppVM : ViewModel() {
     var banner by mutableStateOf<AnnouncementDto?>(null)  // a new announcement that just arrived (students)
     var showWelcome by mutableStateOf(!Prefs.welcomeSeen)  // welcome tour, shown on first launch and from the help center
     var showHelp by mutableStateOf(false)             // help center: FAQ, how the score works, privacy
+    var updatesCategory by mutableStateOf("All")      // Updates tab filter: All or one category
+    var updatesQuery by mutableStateOf("")            // Updates tab search text
     var matchMode by mutableStateOf(false)            // Compare tab: false = side by side, true = "Match me"
     var priorities by mutableStateOf(listOf(5f, 5f, 5f, 5f))  // Match me: originality, achievements, leadership, community (0 to 10)
     var auditLog by mutableStateOf<List<AuditDto>>(emptyList())
@@ -303,12 +305,17 @@ class AppVM : ViewModel() {
 
     override fun onCleared() { stopLive() }
 
+    /** One vote per position. When the last position is voted, the receipt opens; before that, the student goes back to the ballot. */
     fun vote(c: CandidateDto) = launchTask {
         val r = Net.api.vote(VoteReq(c.id))
-        voteStatus = VoteStatusRes(true, r.transactionId)
+        voteStatus = Net.api.voteStatus()
         receiptName = c.fullName
-        showReceipt = true
         results = Net.api.results()
+        if (r.complete) showReceipt = true
+        else {
+            val left = voteStatus?.positions?.count { !it.voted } ?: 0
+            message = "Vote recorded for ${r.position}. $left position${if (left == 1) "" else "s"} left."
+        }
     }
 
     fun logout() {
@@ -317,7 +324,7 @@ class AppVM : ViewModel() {
         user = null; election = null; candidates = emptyList(); announcements = emptyList()
         results = null; voteStatus = null; flagged = emptyList(); otpToken = ""; devOtp = ""
         votes = emptyList(); voters = emptyList(); turnoutRows = emptyList()
-        showReceipt = false; receiptName = null; showTutorial = false; importResult = null; credentials = null; deadline = null; candidateQuery = ""; candidateSort = "default"; comparePicked = emptyList(); adminSub = "overview"
+        showReceipt = false; receiptName = null; showTutorial = false; importResult = null; credentials = null; deadline = null; candidateQuery = ""; candidateSort = "default"; updatesCategory = "All"; updatesQuery = ""; comparePicked = emptyList(); adminSub = "overview"
         loaded = false; offline = false; banner = null; knownAnnouncements = null; matchMode = false; priorities = listOf(5f, 5f, 5f, 5f)
         auditLog = emptyList(); auditOnlyProblems = false; selfTest = null; selfTesting = false; candidatesListState = LazyListState()
         stage = "login"
@@ -339,10 +346,20 @@ class AppVM : ViewModel() {
         loadAll()
         message = "Scores saved"
     }
-    fun postAnnouncement(title: String, body: String) = launchTask {
-        Net.api.postAnnouncement(AnnouncementReq(title, body))
+    fun postAnnouncement(title: String, body: String, category: String, pinned: Boolean, image: ByteArray?) = launchTask {
+        val a = Net.api.postAnnouncement(AnnouncementReq(title, body, category, pinned))
+        if (image != null) Net.api.uploadAnnouncementImage(a.id, jpegBody(image))
         announcements = Net.api.announcements()
-        message = "Announcement posted"
+        message = "Post published"
+    }
+    fun setPostPinned(a: AnnouncementDto) = launchTask {
+        Net.api.editAnnouncement(a.id, AnnouncementEditReq(pinned = !a.pinned))
+        announcements = Net.api.announcements()
+    }
+    fun deletePost(a: AnnouncementDto) = launchTask {
+        Net.api.deleteAnnouncement(a.id)
+        announcements = Net.api.announcements()
+        message = "Post deleted"
     }
     fun addCandidate(req: CandidateReq, photo: ByteArray?) = launchTask {
         val c = Net.api.addCandidate(req)
@@ -681,7 +698,7 @@ fun AppShell(vm: AppVM) {
                         selected = tab == t.id && !showSettings,
                         onClick = { if (tab != t.id) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); tab = t.id; detailId = null; showSettings = false; vm.showReceipt = false },
                         icon = { Icon(t.icon, contentDescription = t.label) },
-                        label = { Text(t.label, fontSize = 11.sp) },
+                        label = { Text(t.label, fontSize = 11.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = MaterialTheme.colorScheme.primary,
                             selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -728,7 +745,8 @@ fun AppShell(vm: AppVM) {
                     }
                 }
             ) { s ->
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.TopCenter) {
+                  Box(Modifier.widthIn(max = 720.dp).fillMaxSize()) {
                     when {
                         s == "login" -> LoginScreen(vm)
                         s == "otp" -> OtpScreen(vm)
@@ -747,6 +765,7 @@ fun AppShell(vm: AppVM) {
                             "admin" -> if (isAdmin) AdminTab(vm)
                         }
                     }
+                  }
                 }
             }
             Column(Modifier.align(Alignment.TopCenter)) {
@@ -767,7 +786,7 @@ fun AppShell(vm: AppVM) {
         ModalBottomSheet(onDismissRequest = { confirm = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 StepStrip(2)
-                Text("Confirm your vote", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Confirm your vote for ${ellipsize(c.position, 30)}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CandidateAvatar(c, 56.dp)
                     Spacer(Modifier.width(12.dp))
@@ -777,11 +796,11 @@ fun AppShell(vm: AppVM) {
                     }
                     CredRing(c.credibilityScore, 46.dp, 4.dp)
                 }
-                Text("Each student may vote once. Your vote cannot be changed after it is recorded.", fontSize = 13.sp,
+                Text("You vote once for each position. A recorded vote cannot be changed.", fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(onClick = { confirm = null }, modifier = Modifier.weight(1f)) { Text("Cancel") }
-                    Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.vote(c); confirm = null }, modifier = Modifier.weight(1f)) { Text("Confirm vote") }
+                    Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.vote(c); confirm = null; detailId = null }, modifier = Modifier.weight(1f)) { Text("Confirm vote") }
                 }
             }
         }
@@ -818,8 +837,8 @@ fun LoginScreen(vm: AppVM) {
         Text(if (admin) "Administrator login for election staff" else "Simulated Supreme Student Council election, PUP Quezon City",
             Modifier.padding(bottom = 16.dp).align(Alignment.CenterHorizontally), fontSize = 13.sp, textAlign = TextAlign.Center)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.CenterHorizontally)) {
-            FilterChip(selected = !admin, onClick = { admin = false; sn = if (Prefs.rememberSn) Prefs.savedSn else ""; pw = ""; showPw = false }, label = { Text("Student") })
-            FilterChip(selected = admin, onClick = { admin = true; sn = ""; pw = ""; showPw = false }, label = { Text("Administrator") })
+            FilterChip(selected = !admin, onClick = { admin = false; sn = if (Prefs.rememberSn) Prefs.savedSn else ""; pw = ""; showPw = false }, leadingIcon = { Icon(VIcons.People, contentDescription = null, Modifier.size(16.dp)) }, label = { Text("Student", maxLines = 1) })
+            FilterChip(selected = admin, onClick = { admin = true; sn = ""; pw = ""; showPw = false }, leadingIcon = { Icon(VIcons.Shield, contentDescription = null, Modifier.size(16.dp)) }, label = { Text("Administrator", maxLines = 1) })
         }
         Spacer(Modifier.height(16.dp))
         OutlinedTextField(
@@ -925,16 +944,18 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                             Text(it, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                         if (vs?.hasVoted == true) Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("You have voted. Transaction ID: ${vs.transactionId?.take(16)}...", fontSize = 12.sp,
+                            val done = vs.positions.count { it.voted }
+                            val total = vs.positions.size
+                            Text(if (vs.complete) "You have voted for all $total positions." else "You have voted for $done of $total positions.", fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.weight(1f))
-                            TextButton(onClick = { vm.showReceipt = true }) { Text("View receipt") }
+                            TextButton(onClick = { vm.showReceipt = true }) { Text("View receipt", maxLines = 1) }
                         }
-                        else if (vm.user?.role == "student") Text("Open a candidate to read the profile and vote.", fontSize = 12.sp,
+                        else if (vm.user?.role == "student") Text("Open a candidate to read the profile and vote. You vote once for each position.", fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                 }
             }
-            if (vm.user?.role == "student") item { HowToVote(done = vm.voteStatus?.hasVoted == true, open = vm.election?.status == "open") }
+            if (vm.user?.role == "student") item { HowToVote(done = vm.voteStatus?.complete == true, open = vm.election?.status == "open") }
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedTextField(vm.candidateQuery, { vm.candidateQuery = it }, placeholder = { Text("Search by name, program or position") },
@@ -961,29 +982,57 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                 if (!vm.loaded) items(3) { SkeletonCard() }
                 else item { Empty(if (vm.candidates.isEmpty()) "No candidates yet." else "No candidate matches your search.") }
             }
-            items(shown, key = { it.id }) { c ->
-                Card(Modifier.fillMaxWidth().clickable { onOpen(c.id) }) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CandidateAvatar(c, 56.dp)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(ellipsize(c.fullName, 28), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(ellipsize(c.position, 14), fontSize = 13.sp, maxLines = 1)
-                                ProgramChip(c.program)
-                            }
-                            if (c.manifesto.isNotBlank()) Text(c.manifesto, fontSize = 12.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
-                            if (c.flagged) Text("Manifesto flagged for review", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CredRing(c.credibilityScore, 48.dp, 4.dp)
-                            Text("credibility", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
+            groupByPosition(shown).forEach { (pos, list) ->
+                val mine = vm.voteStatus?.positions?.firstOrNull { posKey(it.position) == posKey(pos) }
+                item(key = "pos:$pos") { PositionHeader(pos, list.size, mine, vm.user?.role == "student") }
+                items(list, key = { it.id }) { c -> CandidateCard(c, mine?.candidateId == c.id) { onOpen(c.id) } }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PositionHeader(position: String, count: Int, mine: PositionVoteDto?, student: Boolean) {
+    var open by remember { mutableStateOf(false) }
+    val info = findPosition(position)
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Row(Modifier.fillMaxWidth().then(if (info != null) Modifier.clickable { open = !open } else Modifier), verticalAlignment = Alignment.CenterVertically) {
+            Text(ellipsize(position, 24), Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1)
+            if (info != null) { Spacer(Modifier.width(4.dp)); Icon(VIcons.Help, contentDescription = "About this position", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp)) }
+            Spacer(Modifier.width(8.dp))
+            Text(if (count == 1) "1 candidate" else "$count candidates", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.weight(1f))
+            if (student) {
+                if (mine?.voted == true) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(VIcons.Check, contentDescription = null, tint = GREEN, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Voted", fontSize = 12.sp, color = GREEN, fontWeight = FontWeight.Medium, maxLines = 1)
+                } else Text("Not voted yet", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (open && info != null) Text(info.duty, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+@Composable
+private fun CandidateCard(c: CandidateDto, votedForThis: Boolean, onOpen: () -> Unit) {
+    Card(Modifier.fillMaxWidth().clickable { onOpen() }) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            CandidateAvatar(c, 56.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(ellipsize(c.fullName, 28), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                ProgramChip(c.program)
+                if (c.manifesto.isNotBlank()) Text(c.manifesto, fontSize = 12.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                if (votedForThis) Text("Your vote", fontSize = 12.sp, color = GREEN, fontWeight = FontWeight.Bold, maxLines = 1)
+                if (c.flagged) Text("Manifesto flagged for review", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.error)
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CredRing(c.credibilityScore, 48.dp, 4.dp)
+                Text("credibility", fontSize = 10.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -994,7 +1043,8 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
     val isStudent = vm.user?.role == "student"
     val isAdmin = vm.user?.role == "admin"
     val open = vm.election?.status == "open"
-    val voted = vm.voteStatus?.hasVoted == true
+    val mine = vm.voteStatus?.positions?.firstOrNull { posKey(it.position) == posKey(c.position) }
+    val voted = mine?.voted == true  // already voted for THIS position
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = onBack) { Icon(VIcons.Back, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Back to candidates") }
@@ -1046,45 +1096,59 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
             }
         }
         if (isStudent) Button(onClick = onVote, enabled = open && !voted, modifier = Modifier.fillMaxWidth()) {
-            Text(when { voted -> "You have already voted"; !open -> "Voting is not open"; else -> "Vote for ${ellipsize(c.fullName, 24)}" }, maxLines = 1)
+            Text(when {
+                voted && mine?.candidateId == c.id -> "You voted for ${ellipsize(c.fullName, 20)}"
+                voted -> "You already voted for ${ellipsize(c.position, 22)}"
+                !open -> "Voting is not open"
+                else -> "Vote for ${ellipsize(c.fullName, 24)} as ${ellipsize(c.position, 20)}"
+            }, maxLines = 1)
         }
     }
 }
 
-// ---------------- Vote receipt ----------------
+// ---------------- Vote receipt (one line per position) ----------------
 @Composable
 fun ReceiptScreen(vm: AppVM, onResults: () -> Unit, onDone: () -> Unit) {
-    val tx = vm.voteStatus?.transactionId.orEmpty()
+    val vs = vm.voteStatus
     val clip = LocalClipboardManager.current
     val uri = LocalUriHandler.current
     val ctx = LocalContext.current
+    val complete = vs?.complete == true
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)) {
-        StepStrip(4)
+        if (complete) StepStrip(4)
         Box(Modifier.size(72.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
             Icon(VIcons.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(40.dp))
         }
-        Text("Vote recorded", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        vm.receiptName?.let { Text("You voted for $it") }
+        Text(if (complete) "All votes recorded" else "Your votes so far", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(vm.election?.title?.let { ellipsize(it, 40) } ?: "", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         vm.user?.respondentCode?.let { Text("Your respondent code: $it. Write it on the post-pilot survey.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Transaction ID", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                Text(tx, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                Text(vm.election?.title ?: "", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedButton(onClick = { clip.setText(AnnotatedString(tx)); vm.message = "Transaction ID copied" }) {
-                    Icon(VIcons.Copy, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Copy")
+        vs?.positions?.forEach { p ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(ellipsize(p.position, 26), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, modifier = Modifier.weight(1f))
+                        Text(if (p.voted) "Voted" else "Not voted yet", fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+                            color = if (p.voted) GREEN else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (p.voted) {
+                        Text(ellipsize(p.candidateName ?: "", 32), fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text(p.transactionId ?: "", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                        OutlinedButton(onClick = { clip.setText(AnnotatedString(p.transactionId ?: "")); vm.message = "Transaction ID copied" }) {
+                            Icon(VIcons.Copy, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Copy ID", maxLines = 1)
+                        }
+                    }
                 }
             }
         }
-        Text("This code is a SHA-256 hash made from your student number and the election. Keep it as proof that your vote was recorded.",
+        Text("Each code is a SHA-256 hash made from your student number, the election and the position. Keep them as proof that your votes were recorded.",
             fontSize = 12.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Button(onClick = onResults, modifier = Modifier.fillMaxWidth()) { Text("View live results") }
         vm.election?.surveyUrl?.let { link ->
-            OutlinedButton(onClick = { uri.openUri(link) }, modifier = Modifier.fillMaxWidth()) { Text("Open the post-pilot survey") }
+            if (complete) OutlinedButton(onClick = { uri.openUri(link) }, modifier = Modifier.fillMaxWidth()) { Text("Open the post-pilot survey") }
         }
         OutlinedButton(onClick = { printHtml(ctx, "VotEra vote receipt", receiptHtml(vm)) }, modifier = Modifier.fillMaxWidth()) { Text("Print or save as PDF") }
-        TextButton(onClick = onDone) { Text("Done") }
+        TextButton(onClick = onDone) { Text(if (complete) "Done" else "Back to the ballot") }
     }
 }
 
@@ -1093,8 +1157,8 @@ fun ReceiptScreen(vm: AppVM, onResults: () -> Unit, onDone: () -> Unit) {
 fun CompareTab(vm: AppVM) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(horizontal = 16.dp).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = !vm.matchMode, onClick = { vm.matchMode = false }, label = { Text("Side by side") })
-            FilterChip(selected = vm.matchMode, onClick = { vm.matchMode = true }, label = { Text("Match me") })
+            FilterChip(selected = !vm.matchMode, onClick = { vm.matchMode = false }, leadingIcon = { Icon(VIcons.Compare, contentDescription = null, Modifier.size(16.dp)) }, label = { Text("Side by side", maxLines = 1) })
+            FilterChip(selected = vm.matchMode, onClick = { vm.matchMode = true }, leadingIcon = { Icon(VIcons.Check, contentDescription = null, Modifier.size(16.dp)) }, label = { Text("Match me", maxLines = 1) })
         }
         Box(Modifier.weight(1f).fillMaxWidth()) { if (vm.matchMode) MatchMe(vm) else SideBySide(vm) }
     }
@@ -1142,24 +1206,18 @@ private fun SideBySide(vm: AppVM) {
     }
 }
 
-// ---------------- Announcements ----------------
+// ---------------- Announcements: posts with categories, filters and pictures ----------------
 @Composable
 fun UpdatesTab(vm: AppVM) {
+    val shown = visiblePosts(vm)
     PullToRefreshBox(isRefreshing = vm.refreshing, onRefresh = { vm.refresh() }, modifier = Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (vm.announcements.isEmpty()) {
-                if (!vm.loaded) items(3) { SkeletonCard() } else item { Empty("No announcements yet. Pull down to refresh.") }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (vm.announcements.isNotEmpty()) item { PostFilters(vm) }
+            if (shown.isEmpty()) {
+                if (!vm.loaded) items(3) { SkeletonCard() }
+                else item { Empty(if (vm.announcements.isEmpty()) "No announcements yet. Pull down to refresh." else "No update matches. Try another category or clear the search.") }
             }
-            items(vm.announcements, key = { it.id }) { a ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(ellipsize(a.title, 60), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2)
-                        Text(a.createdAt.take(10), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(4.dp))
-                        Text(a.body)
-                    }
-                }
-            }
+            items(shown, key = { it.id }) { a -> PostCard(a) }
         }
     }
 }
@@ -1212,7 +1270,7 @@ fun ResultRow(r: ResultRowDto, candidate: CandidateDto?, showBar: Boolean) {
                     .padding(horizontal = 8.dp, vertical = 2.dp))
                 Spacer(Modifier.width(8.dp))
             }
-            Text("${r.votes} votes (${fmt(r.percent)}%)")
+            Text("${r.votes} votes (${fmt(r.percent)}%)", maxLines = 1, fontSize = 13.sp)
         }
         if (showBar) {
             Spacer(Modifier.height(4.dp))
@@ -1226,6 +1284,7 @@ fun ResultRow(r: ResultRowDto, candidate: CandidateDto?, showBar: Boolean) {
 @Composable
 fun ResultsTab(vm: AppVM) {
     var mode by remember { mutableStateOf("bar") }
+    var picked by remember { mutableStateOf<String?>(null) }
     val res = vm.results
     PullToRefreshBox(isRefreshing = vm.refreshing, onRefresh = { vm.refresh() }, modifier = Modifier.fillMaxSize()) {
         if (res == null) {
@@ -1234,6 +1293,9 @@ fun ResultsTab(vm: AppVM) {
         } else {
             val t = res.turnout
             val tp by animateFloatAsState((t.turnoutPercent / 100).toFloat().coerceIn(0f, 1f), animationSpec = tween(600), label = "turnout")
+            val positions = res.positions.ifEmpty { res.results.map { it.position }.distinct() }
+            val pos = picked?.takeIf { it in positions } ?: positions.firstOrNull()
+            val rows = res.results.filter { pos == null || it.position == pos }
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Card {
                     Column(Modifier.padding(16.dp)) {
@@ -1246,12 +1308,16 @@ fun ResultsTab(vm: AppVM) {
                         LinearProgressIndicator(progress = { tp }, modifier = Modifier.fillMaxWidth())
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = mode == "bar", onClick = { mode = "bar" }, label = { Text("Bar chart") })
-                    FilterChip(selected = mode == "pie", onClick = { mode = "pie" }, label = { Text("Donut chart") })
+                if (positions.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    positions.forEach { p -> FilterChip(selected = p == pos, onClick = { picked = p }, label = { Text(ellipsize(posShort(p), 18), maxLines = 1) }) }
                 }
-                if (mode == "pie") PieChart(res.results)
-                res.results.forEach { r -> ResultRow(r, vm.candidates.firstOrNull { it.id == r.candidateId }, showBar = mode == "bar") }
+                if (pos != null) Text(pos, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = mode == "bar", onClick = { mode = "bar" }, leadingIcon = { Icon(VIcons.Bars, contentDescription = null, Modifier.size(16.dp)) }, label = { Text("Bar chart", maxLines = 1) })
+                    FilterChip(selected = mode == "pie", onClick = { mode = "pie" }, leadingIcon = { Icon(VIcons.Dashboard, contentDescription = null, Modifier.size(16.dp)) }, label = { Text("Donut chart", maxLines = 1) })
+                }
+                if (mode == "pie") key(pos) { PieChart(rows) }
+                rows.forEach { r -> ResultRow(r, vm.candidates.firstOrNull { it.id == r.candidateId }, showBar = mode == "bar") }
                 Text("Totals only. Individual choices are not shown to other students.", fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -1267,7 +1333,7 @@ fun HowToVote(done: Boolean, open: Boolean) {
             Text("How to vote", style = MaterialTheme.typography.titleMedium)
             listOf(
                 Triple("1", "Read the candidates", "Tap a candidate to read the platform. Use the Compare tab to see two or more side by side."),
-                Triple("2", if (done) "You have voted" else if (open) "Cast your vote" else "Voting opens soon", if (done) "Your receipt is saved on this screen." else "Open a candidate and tap Vote, then confirm. You can vote once."),
+                Triple("2", if (done) "You have voted" else if (open) "Cast your vote" else "Voting opens soon", if (done) "Your receipt is saved on this screen." else "Open a candidate and tap Vote, then confirm. You vote once for each position, such as President and Vice President."),
                 Triple("3", "Watch the results", "The Results tab updates live with totals. Individual votes are not shown.")
             ).forEachIndexed { i, (n, head, body) ->
                 Row(verticalAlignment = Alignment.Top) {
