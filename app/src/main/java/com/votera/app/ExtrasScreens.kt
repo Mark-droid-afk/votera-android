@@ -811,3 +811,15 @@ fun AdminPosts(vm: AppVM) {
         )
     }
 }
+
+/** A small "done" dialog with a green check, shown after something important succeeds. */
+@Composable
+fun SuccessDialog(title: String, text: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Box(Modifier.size(48.dp).clip(CircleShape).background(GREEN), contentAlignment = Alignment.Center) {
+            Icon(VIcons.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp)) } },
+        title = { Text(title, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
+        text = { Text(text, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } })
+}
