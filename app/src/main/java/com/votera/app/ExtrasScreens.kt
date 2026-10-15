@@ -43,6 +43,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import kotlinx.coroutines.launch
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.aspectRatio
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -103,8 +112,11 @@ fun receiptHtml(vm: AppVM): String {
     body.append("<tr><th>Election</th><td>${htmlEscape(vm.election?.title ?: "")}</td></tr>")
     body.append("<tr><th>Student</th><td>${htmlEscape(u?.fullName ?: "")} (${htmlEscape(u?.studentNumber ?: "")})</td></tr>")
     if (u?.respondentCode != null) body.append("<tr><th>Respondent code</th><td>${htmlEscape(u.respondentCode)}</td></tr>")
-    body.append("<tr><th>Transaction ID (SHA-256)</th><td class=\"mono\">${htmlEscape(vm.voteStatus?.transactionId ?: "")}</td></tr></table>")
-    body.append("<p><small>Keep this as proof that your vote was recorded. Each student can vote once.</small></p>")
+    body.append("</table><h2>Votes</h2><table><tr><th>Position</th><th>Candidate</th><th>Transaction ID (SHA-256)</th></tr>")
+    vm.voteStatus?.positions?.filter { it.voted }?.sortedBy { positionRank(it.position) }?.forEach {
+        body.append("<tr><td>${htmlEscape(it.position)}</td><td>${htmlEscape(it.candidateName ?: "")}</td><td class=\"mono\">${htmlEscape(it.transactionId ?: "")}</td></tr>")
+    }
+    body.append("</table><p><small>Keep this as proof that your votes were recorded. Each student votes once for each position.</small></p>")
     return pageHtml("VotEra vote receipt", body.toString())
 }
 
@@ -115,9 +127,12 @@ fun reportHtml(vm: AppVM): String {
     b.append("<p>${htmlEscape(vm.election?.title ?: "")} (status: ${htmlEscape(vm.election?.status ?: "-")})</p>")
     if (res != null) {
         b.append("<p>Turnout: ${res.turnout.votesCast} of ${res.turnout.eligibleVoters} eligible voters (${fmt(res.turnout.turnoutPercent)}%)</p>")
-        b.append("<h2>Final ranking</h2><table><tr><th>Rank</th><th>Candidate</th><th>Votes</th><th>Share</th></tr>")
-        res.results.forEach { b.append("<tr><td>${it.rank}</td><td>${htmlEscape(it.fullName)}</td><td>${it.votes}</td><td>${fmt(it.percent)}%</td></tr>") }
-        b.append("</table><p><small>Counted with a hash map and ordered with Quick Sort, highest to lowest.</small></p>")
+        resultGroups(res.results).forEach { (pos, rows) ->
+            b.append("<h2>${htmlEscape(pos)}</h2><table><tr><th>Rank</th><th>Candidate</th><th>Votes</th><th>Share</th></tr>")
+            rows.forEach { b.append("<tr><td>${it.rank}</td><td>${htmlEscape(it.fullName)}</td><td>${it.votes}</td><td>${fmt(it.percent)}%</td></tr>") }
+            b.append("</table>")
+        }
+        b.append("<p><small>Counted with a hash map and ordered with Quick Sort, highest to lowest, separately for each position.</small></p>")
     }
     b.append("<h2>Turnout per program</h2><table><tr><th>Program</th><th>Voted</th><th>Eligible</th><th>Rate</th></tr>")
     vm.turnoutRows.forEach { b.append("<tr><td>${htmlEscape(it.program)}</td><td>${it.voted}</td><td>${it.eligible}</td><td>${fmt(it.percent)}%</td></tr>") }
@@ -554,5 +569,245 @@ fun HelpCenter(onBack: () -> Unit, onTour: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
             }
         }
+    }
+}
+
+
+// ---------------- Positions (President, Vice President, Secretary, ...) ----------------
+fun posKey(p: String): String = p.trim().replace(Regex("\\s+"), " ").lowercase()
+
+/** A Student Council position with a short description of what it does (from the Commission on Election posters). */
+data class SscPosition(val name: String, val abbr: String?, val duty: String)
+
+val SSC_POSITIONS = listOf(
+    SscPosition("President", null, "Leads the implementation of policies, rules and programs. Supervises the council and student organizations, presides over meetings, represents the student body in events and signs official documents. Also approves or modifies programs and projects, creates committees when needed and appoints their heads."),
+    SscPosition("Vice President", null, "Assumes the duties of the President when the President is absent or unable. Assists in council matters, leads the External Affairs and Partnership Committee, oversees student organizations and links the council and the Council of Leaders. Also handles internal concerns involving officers and helps prepare the budget."),
+    SscPosition("Secretary-General", null, "Leads the Publicity and Communications Committee and handles the council's documentation. Records meeting minutes, prepares the calendar of activities, maintains the Executive Board directory and makes sure accomplishment reports are documented. Also keeps the Executive Board updated."),
+    SscPosition("Treasurer", null, "Keeps the financial records and handles the release of funds based on approved appropriations. Prepares and submits financial reports at the end of each semester and serves as the property custodian. Also performs other duties assigned by the President."),
+    SscPosition("Auditor", null, "Checks the financial reports of the Treasurer and keeps an inventory of assets. Reports any financial discrepancies involving the council and student organizations to the President. Also performs other duties assigned by the President."),
+    SscPosition("Publicity and Communications Councilor (PCC)", "PCC", "Prepares official documents such as letters, memoranda, minutes and announcements. Shares important information with students through appropriate platforms and coordinates with class and organization officers to carry out plans and activities."),
+    SscPosition("Creatives and Media Councilor (CMC)", "CMC", "Works with the Publicity and Communications Councilor in creating publicity materials such as graphics and videos. Helps promote programs and activities through creative materials and assists with technical needs such as presentations and audio or sound systems."),
+    SscPosition("Students' Rights and Welfare Councilor (STRAWC)", "STRAWC", "Protects the rights and welfare of students and helps uphold academic freedom. Manages the E-REPORT online helpdesk for student concerns, gathers and reports issues raised by students and recommends ways to address them. Also serves as the Legal Consultant."),
+    SscPosition("Academics and Research Councilor (ARC)", "ARC", "Initiates programs and projects that support academic excellence, including student research activities. Promotes culture and arts initiatives and helps promote nationalistic, scientific and mass-oriented education. Also coordinates with research-related officers of student organizations."),
+    SscPosition("Gender and Development Councilor (GADC)", "GADC", "Promotes a safe space for people with diverse sexual orientations, gender identities, gender expressions and sex characteristics. Develops programs and projects related to gender and development and coordinates with the Guidance and Counselling Office and other related organizations."),
+    SscPosition("External Affairs and Partnership Councilor (EAPC)", "EAPC", "Seeks partnership and sponsorship opportunities to support programs and increase participation. Maintains a directory and coordinates with external affairs-related officers of student organizations to carry out plans and activities."),
+    SscPosition("Logistics and Technical Councilor (LTC)", "LTC", "Conducts site visits and prepares floor plans before activities. Ensures the safety and proper condition of venues before, during and after events. Handles technical equipment such as desktops and projectors and coordinates with the Treasurer and Auditor for materials and supplies.")
+)
+
+/** Finds the standard position for what was typed, also accepting the abbreviation (PCC) and the old names "Secretary" and "SSC President". */
+fun findPosition(p: String): SscPosition? {
+    val k = posKey(p)
+    if (k.isEmpty()) return null
+    SSC_POSITIONS.firstOrNull { posKey(it.name) == k || it.abbr?.lowercase() == k }?.let { return it }
+    return when (k) { "secretary", "secretary general" -> SSC_POSITIONS[2]; "ssc president" -> SSC_POSITIONS[0]; else -> null }
+}
+
+fun isCouncilor(p: String): Boolean = SSC_POSITIONS.indexOf(findPosition(p)) >= 5
+
+/** Short label for tight spaces: the abbreviation for councilors (PCC, CMC, ...), otherwise the name. */
+fun posShort(p: String): String = findPosition(p)?.abbr ?: p
+
+/** Ballot order: the standard SSC list first, then custom positions A to Z. Same order as the server. */
+fun positionRank(p: String): Int {
+    val i = SSC_POSITIONS.indexOf(findPosition(p))
+    if (i >= 0) return i
+    val k = posKey(p)
+    return when {
+        k.contains("vice") && k.contains("president") -> 1
+        k.contains("president") -> 0
+        k.contains("treasurer") -> 3
+        k.contains("auditor") -> 4
+        else -> 100
+    }
+}
+
+/** Candidates grouped by position, in ballot order. */
+fun groupByPosition(list: List<CandidateDto>): List<Pair<String, List<CandidateDto>>> =
+    list.groupBy { posKey(it.position).ifEmpty { "candidate" } }.values
+        .map { g -> (g.first().position.trim().replace(Regex("\\s+"), " ").ifEmpty { "Candidate" }) to g }
+        .sortedWith(compareBy({ positionRank(it.first) }, { posKey(it.first) }))
+
+// ---------------- Updates: unique "ballot stub" post cards, categories and filters ----------------
+fun categoryColor(c: String): Color = when (c) {
+    "Urgent" -> Color(0xFFC62828)
+    "Schedule" -> GOLD
+    "Reminder" -> Color(0xFF1F6F8B)
+    "Rules" -> MAROON
+    "Results" -> GREEN
+    else -> Color(0xFF777777)
+}
+
+/** "Just now", "5 min ago", "3 h ago", "2 d ago", then the date. */
+fun timeAgo(iso: String): String = try {
+    val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+    val t = parser.parse(iso.take(19))!!.time
+    val s = (System.currentTimeMillis() - t) / 1000
+    when {
+        s < 60 -> "Just now"
+        s < 3600 -> "${s / 60} min ago"
+        s < 86400 -> "${s / 3600} h ago"
+        s < 7 * 86400 -> "${s / 86400} d ago"
+        else -> SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(java.util.Date(t))
+    }
+} catch (e: Exception) { iso.take(10) }
+
+@Composable
+fun CategoryChip(category: String) {
+    val c = categoryColor(category)
+    Row(Modifier.clip(RoundedCornerShape(50)).background(c.copy(alpha = 0.16f)).padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(7.dp).clip(CircleShape).background(c))
+        Spacer(Modifier.width(5.dp))
+        Text(category, fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+@Composable
+fun PostImage(a: AnnouncementDto) {
+    if (a.imageVersion <= 0) return
+    var bmp by remember(a.id, a.imageVersion) { mutableStateOf(PostImageCache.get(a.id, a.imageVersion)) }
+    LaunchedEffect(a.id, a.imageVersion) { if (bmp == null) bmp = PostImageCache.load(a.id, a.imageVersion) }
+    val b = bmp
+    val ratio = if (b != null) (b.width.toFloat() / b.height).coerceIn(0.9f, 1.91f) else 16f / 9f
+    Box(Modifier.fillMaxWidth().aspectRatio(ratio).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+        if (b != null) Image(bitmap = b, contentDescription = "Picture for ${a.title}", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        else CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+    }
+}
+
+/** A post: committee header, optional picture, title, a dashed "ballot stub" line, then the message. The stripe on the left shows the category. */
+@Composable
+fun PostCard(a: AnnouncementDto, onPin: (() -> Unit)? = null, onDelete: (() -> Unit)? = null) {
+    val color = categoryColor(a.category)
+    var expanded by remember(a.id) { mutableStateOf(false) }
+    val line = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+    Card(Modifier.fillMaxWidth()) {
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            Box(Modifier.width(5.dp).fillMaxHeight().background(color))
+            Column(Modifier.weight(1f)) {
+                Row(Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(36.dp).clip(CircleShape).background(MAROON), contentAlignment = Alignment.Center) {
+                        Text("V", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("VotEra Election Committee", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(timeAgo(a.createdAt) + if (a.pinned) "  |  Pinned" else "", fontSize = 11.sp, maxLines = 1,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    CategoryChip(a.category)
+                }
+                PostImage(a)
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(ellipsize(a.title, 80), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Canvas(Modifier.fillMaxWidth().height(2.dp)) {
+                        drawLine(line, Offset(0f, 1f), Offset(size.width, 1f), strokeWidth = 2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f)))
+                    }
+                    if (a.body.isNotBlank()) {
+                        Text(a.body, fontSize = 14.sp, maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis)
+                        if (a.body.length > 140) Text(if (expanded) "Show less" else "Read more", fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { expanded = !expanded })
+                    }
+                    if (onPin != null || onDelete != null) Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (onPin != null) TextButton(onClick = onPin) { Text(if (a.pinned) "Unpin" else "Pin to top", maxLines = 1) }
+                        Spacer(Modifier.weight(1f))
+                        if (onDelete != null) TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error, maxLines = 1) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The posts that match the search box and the selected category. */
+fun visiblePosts(vm: AppVM): List<AnnouncementDto> {
+    val q = vm.updatesQuery.trim()
+    val present = vm.announcements.map { it.category }.toSet()
+    val cat = if (vm.updatesCategory == "All" || vm.updatesCategory in present) vm.updatesCategory else "All"
+    return vm.announcements.filter {
+        (cat == "All" || it.category == cat) &&
+            (q.isEmpty() || it.title.contains(q, true) || it.body.contains(q, true) || it.category.contains(q, true))
+    }
+}
+
+/** Search box and category chips (All, Schedule, Reminder, Rules, Results, Urgent, General) with a count on each. */
+@Composable
+fun PostFilters(vm: AppVM) {
+    val present = vm.announcements.groupingBy { it.category }.eachCount()
+    val cat = if (vm.updatesCategory == "All" || vm.updatesCategory in present.keys) vm.updatesCategory else "All"
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedTextField(vm.updatesQuery, { vm.updatesQuery = cleanText(it, 60) }, placeholder = { Text("Search updates") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = cat == "All", onClick = { vm.updatesCategory = "All" }, label = { Text("All (${vm.announcements.size})", maxLines = 1) })
+            POST_CATEGORIES.filter { it in present.keys }.forEach { c ->
+                FilterChip(selected = cat == c, onClick = { vm.updatesCategory = c }, label = { Text("$c (${present[c]})", maxLines = 1) })
+            }
+        }
+    }
+}
+
+/** Admin > Posts: write a post with a category, an optional picture and an optional pin, then manage the posts already published. */
+@Composable
+fun AdminPosts(vm: AppVM) {
+    val ctx = LocalContext.current
+    var title by remember { mutableStateOf("") }
+    var body by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf("General") }
+    var pinned by remember { mutableStateOf(false) }
+    var image by remember { mutableStateOf<ByteArray?>(null) }
+    var deleting by remember { mutableStateOf<AnnouncementDto?>(null) }
+    val preview = remember(image) { image?.let { bytesToImage(it) } }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            val b = compressPostImage(ctx, uri)
+            if (b == null) vm.message = "That picture could not be read. Try another one." else image = b
+        }
+    }
+    val shown = visiblePosts(vm)
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Card {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("New post", style = MaterialTheme.typography.titleMedium)
+                    OutlinedTextField(title, { title = cleanText(it, 80) }, label = { Text("Title") }, supportingText = { Text("${title.length}/80") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(body, { body = it.take(1000) }, label = { Text("Message") }, supportingText = { Text("${body.length}/1000") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+                    Text("Category", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        POST_CATEGORIES.forEach { c -> FilterChip(selected = category == c, onClick = { category = c }, label = { Text(c, maxLines = 1) }) }
+                    }
+                    if (preview != null) Box {
+                        Image(bitmap = preview, contentDescription = "Picture to post", contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)))
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(onClick = { picker.launch("image/*") }) { Text(if (image == null) "Add picture" else "Change picture", maxLines = 1) }
+                        if (image != null) TextButton(onClick = { image = null }) { Text("Remove picture", maxLines = 1) }
+                    }
+                    Row(Modifier.clickable { pinned = !pinned }, verticalAlignment = Alignment.CenterVertically) {
+                        Switch(checked = pinned, onCheckedChange = { pinned = it })
+                        Spacer(Modifier.width(10.dp))
+                        Text("Pin to the top", fontSize = 13.sp)
+                    }
+                    Button(onClick = {
+                        vm.postAnnouncement(title.trim(), body.trim(), category, pinned, image)
+                        title = ""; body = ""; category = "General"; pinned = false; image = null
+                    }, enabled = title.isNotBlank() && !vm.busy, modifier = Modifier.fillMaxWidth()) { Text("Post") }
+                    Text("Students see new posts right away. Pictures are shrunk before they are sent.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item { Text("Posts (${vm.announcements.size})", style = MaterialTheme.typography.titleMedium) }
+        item { PostFilters(vm) }
+        if (shown.isEmpty()) item { Empty(if (vm.announcements.isEmpty()) "No posts yet." else "No post matches your search.") }
+        items(shown, key = { it.id }) { a -> PostCard(a, onPin = { vm.setPostPinned(a) }, onDelete = { deleting = a }) }
+    }
+    deleting?.let { a ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text("Delete this post?") },
+            text = { Text("\"${ellipsize(a.title, 40)}\" is removed for every student.") },
+            confirmButton = { TextButton(onClick = { vm.deletePost(a); deleting = null }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } }
+        )
     }
 }
