@@ -325,7 +325,7 @@ fun MatchMe(vm: AppVM) {
                         CandidateAvatar(c, 40.dp)
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(c.fullName, fontWeight = FontWeight.Bold)
+                            Text(ellipsize(c.fullName, 24), fontWeight = FontWeight.Bold, maxLines = 1)
                             Text("Official credibility ${fmt(c.credibilityScore)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text(fmt(mine), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -355,6 +355,12 @@ fun ThemeToggleButton(tint: Color = LocalContentColor.current) {
     }
 }
 
+/** Shortens text that is too long and ends it with dots, for example "BS - Entrepreneurship" becomes "BS - Entrep...". */
+fun ellipsize(s: String, max: Int): String = if (s.length > max) s.take(max).trimEnd() + "..." else s
+
+/** Cleans text typed into a field: collapses extra spaces and line breaks and stops it at a sensible length. */
+fun cleanText(s: String, max: Int): String = s.replace(Regex("\\s+"), " ").trimStart().take(max)
+
 fun programColor(program: String): Color = PALETTE[(program.hashCode() and Int.MAX_VALUE) % PALETTE.size]
 
 /** Program name with its own accent color, so BSIT, BSCS and the rest are easy to tell apart. */
@@ -364,7 +370,7 @@ fun ProgramChip(program: String) {
     Row(Modifier.clip(RoundedCornerShape(50)).background(c.copy(alpha = 0.18f)).padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(7.dp).clip(CircleShape).background(c))
         Spacer(Modifier.width(5.dp))
-        Text(program, fontSize = 11.sp)
+        Text(ellipsize(program, 12), fontSize = 11.sp, maxLines = 1)
     }
 }
 
