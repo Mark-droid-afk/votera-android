@@ -67,7 +67,7 @@ fun SettingsScreen(vm: AppVM) {
             }
             Text("Text size", fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(0.9f to "Small", 1.0f to "Default", 1.15f to "Large", 1.3f to "Extra large").forEach { (v, label) ->
+                listOf(0.9f to "Small", 1.0f to "Default", 1.15f to "Large").forEach { (v, label) ->
                     FilterChip(selected = Prefs.textScale == v, onClick = { Prefs.updateTextScale(v) }, label = { Text(label) })
                 }
             }
