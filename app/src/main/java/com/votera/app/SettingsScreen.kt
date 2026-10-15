@@ -116,7 +116,7 @@ fun SettingsScreen(vm: AppVM) {
                         ServerConfig.save(n); server = n; testing = true; testResult = "Testing..."
                         scope.launch {
                             testResult = try {
-                                val h = Net.api.health()
+                                val h = Net.api.healthDb()
                                 "Connected. Election status: ${h.election ?: "not set up"}"
                             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                             catch (t: Throwable) { errorMessage(t) }
@@ -137,6 +137,7 @@ fun SettingsScreen(vm: AppVM) {
             Text("Version 1.0 prototype", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
+        OutlinedButton(onClick = { vm.showHelp = true }, modifier = Modifier.fillMaxWidth()) { Text("Help, FAQ and privacy") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedButton(onClick = { confirmReset = true }, modifier = Modifier.weight(1f)) { Text("Reset settings") }
             Button(onClick = { vm.logout() }, modifier = Modifier.weight(1f)) { Text("Log out") }
