@@ -337,6 +337,7 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
     var sl by remember { mutableStateOf(initial?.leadershipScore?.let { fmt(it) } ?: "") }
     var sc by remember { mutableStateOf(initial?.communityScore?.let { fmt(it) } ?: "") }
     var error by remember { mutableStateOf<String?>(null) }
+    var confirmPhoto by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     var photoBytes by remember { mutableStateOf<ByteArray?>(null) }
     val preview: ImageBitmap? = remember(photoBytes) { photoBytes?.let { bytesToImage(it) } }
@@ -359,7 +360,7 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
                     else Avatar(name.ifBlank { "?" }, 1, 72.dp)
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         OutlinedButton(onClick = { picker.launch("image/*") }) { Text(if (preview != null || (initial?.photoVersion ?: 0) > 0) "Change photo" else "Choose photo") }
-                        if (initial != null && initial.photoVersion > 0 && preview == null) TextButton(onClick = onRemovePhoto) { Text("Remove photo") }
+                        if (initial != null && initial.photoVersion > 0 && preview == null) TextButton(onClick = { confirmPhoto = true }) { Text("Remove photo") }
                         Text("Square photos look best.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -421,6 +422,12 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
+    if (confirmPhoto) AlertDialog(
+        onDismissRequest = { confirmPhoto = false },
+        title = { Text("Remove this photo?") },
+        text = { Text("The candidate will show the initials avatar instead.") },
+        confirmButton = { TextButton(onClick = { confirmPhoto = false; onRemovePhoto() }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = { confirmPhoto = false }) { Text("Cancel") } })
 }
 
 // ----- Vote audit: who voted for whom (administrator only) -----
