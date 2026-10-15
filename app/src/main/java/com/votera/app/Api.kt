@@ -92,6 +92,8 @@ object Prefs {
         private set
     var reduceMotion by mutableStateOf(false)    // no sliding transitions
         private set
+    var welcomeSeen by mutableStateOf(false)     // the welcome tour has been shown once
+        private set
 
     fun init(context: Context) {
         val p = context.getSharedPreferences("votera_prefs", Context.MODE_PRIVATE)
@@ -103,12 +105,14 @@ object Prefs {
         savedSn = p.getString("saved_sn", "") ?: ""
         highContrast = p.getBoolean("high_contrast", false)
         reduceMotion = p.getBoolean("reduce_motion", false)
+        welcomeSeen = p.getBoolean("welcome_seen", false)
     }
 
     fun updateTheme(v: String) { theme = v; sp?.edit()?.putString("theme", v)?.apply() }
     fun updateTextScale(v: Float) { textScale = v; sp?.edit()?.putFloat("text_scale", v)?.apply() }
     fun updateLive(v: Boolean) { live = v; sp?.edit()?.putBoolean("live", v)?.apply() }
     fun updateHighContrast(v: Boolean) { highContrast = v; sp?.edit()?.putBoolean("high_contrast", v)?.apply() }
+    fun markWelcomeSeen() { welcomeSeen = true; sp?.edit()?.putBoolean("welcome_seen", true)?.apply() }
     fun updateReduceMotion(v: Boolean) { reduceMotion = v; sp?.edit()?.putBoolean("reduce_motion", v)?.apply() }
     fun updateRememberSn(v: Boolean) {
         rememberSn = v
@@ -198,6 +202,7 @@ data class SelfTestRes(val passed: Int, val total: Int, val checks: List<SelfChe
 
 interface VoteraApi {
     @GET("health") suspend fun health(): HealthRes
+    @GET("health/db") suspend fun healthDb(): HealthRes
     @POST("auth/login") suspend fun login(@Body b: LoginReq): LoginRes
     @POST("auth/verify-otp") suspend fun verifyOtp(@Body b: OtpReq): TokenRes
     @GET("election") suspend fun election(): ElectionDto
@@ -270,7 +275,7 @@ object Net {
  *  still decide what each person is allowed to see (students get totals only). */
 object Live {
     /** Opens the socket and suspends until it closes or fails. Cancelling the caller closes the socket. */
-    suspend fun connect(token: String, onReady: () -> Unit, onChanged: () -> Unit) =
+    suspend fun connect(token: String, onReady: () -> Unit, onChanged: (Set<String>) -> Unit) =
         suspendCancellableCoroutine<Unit> { cont ->
             val wsUrl = ServerConfig.baseUrl.replaceFirst("http", "ws") + "ws"
             val socket = Net.wsClient.newWebSocket(Request.Builder().url(wsUrl).build(), object : WebSocketListener() {
@@ -279,8 +284,13 @@ object Live {
                 }
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     try {
-                        val type = JsonParser.parseString(text).asJsonObject.get("type").asString
-                        if (type == "ready") onReady() else if (type == "changed") onChanged()
+                        val obj = JsonParser.parseString(text).asJsonObject
+                        val type = obj.get("type").asString
+                        if (type == "ready") onReady()
+                        else if (type == "changed") {
+                            val topics = obj.getAsJsonArray("topics")?.map { it.asString }?.toSet() ?: emptySet()
+                            onChanged(topics)
+                        }
                     } catch (_: Exception) { }
                 }
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { if (cont.isActive) cont.resume(Unit) }
