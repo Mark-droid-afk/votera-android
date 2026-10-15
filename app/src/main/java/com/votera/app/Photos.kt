@@ -3,6 +3,8 @@ package com.votera.app
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import android.util.LruCache
 import androidx.compose.foundation.Image
@@ -72,14 +74,77 @@ fun compressPhoto(ctx: Context, uri: Uri): ByteArray? {
         while (bounds.outWidth / sample > 1200 || bounds.outHeight / sample > 1200) sample *= 2
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
         val bmp = ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
+        // Phones often store photos sideways and add a rotation tag. Read it so the photo is upright.
+        val orientation = try {
+            ctx.contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) }
+        } catch (e: Exception) { null } ?: ExifInterface.ORIENTATION_NORMAL
+        val degrees = when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> 0f
+        }
         val side = minOf(bmp.width, bmp.height)
-        val square = Bitmap.createBitmap(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side)
+        val square = Bitmap.createBitmap(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, Matrix().apply { postRotate(degrees) }, true)
         val scaled = Bitmap.createScaledBitmap(square, 480, 480, true)
         val out = ByteArrayOutputStream()
         scaled.compress(Bitmap.CompressFormat.JPEG, 85, out)
         out.toByteArray()
     } catch (e: Exception) {
         null
+    }
+}
+
+/** Picture for an announcement post: keeps its shape (no square crop), upright, longest side 1280 px, JPEG (about 150 KB). */
+fun compressPostImage(ctx: Context, uri: Uri): ByteArray? {
+    return try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (bounds.outWidth / sample > 2400 || bounds.outHeight / sample > 2400) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        val bmp = ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
+        val orientation = try {
+            ctx.contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) }
+        } catch (e: Exception) { null } ?: ExifInterface.ORIENTATION_NORMAL
+        val degrees = when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> 0f
+        }
+        val upright = if (degrees != 0f) Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(degrees) }, true) else bmp
+        val longest = maxOf(upright.width, upright.height)
+        val scale = if (longest > 1280) 1280f / longest else 1f
+        val scaled = if (scale < 1f) Bitmap.createScaledBitmap(upright, (upright.width * scale).toInt(), (upright.height * scale).toInt(), true) else upright
+        val out = ByteArrayOutputStream()
+        scaled.compress(Bitmap.CompressFormat.JPEG, 82, out)
+        out.toByteArray()
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/** Announcement pictures, fetched with the login token and kept in memory. The key includes the version, so a replaced picture refreshes. */
+object PostImageCache {
+    private val cache = LruCache<String, ImageBitmap>(20)
+    private fun key(id: Int, version: Int) = "$id:$version"
+    fun get(id: Int, version: Int): ImageBitmap? = cache.get(key(id, version))
+
+    suspend fun load(id: Int, version: Int): ImageBitmap? {
+        get(id, version)?.let { return it }
+        return withContext(Dispatchers.IO) {
+            try {
+                val bytes = Net.api.announcementImage(id).bytes()
+                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                if (bmp != null) cache.put(key(id, version), bmp)
+                bmp
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        }
     }
 }
 
