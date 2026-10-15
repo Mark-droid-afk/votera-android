@@ -29,6 +29,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -323,5 +337,216 @@ fun MatchMe(vm: AppVM) {
         val missing = vm.candidates.filter { c -> listOf(c.originalityScore, c.achievementsScore, c.leadershipScore, c.communityScore).any { it == null } }
         if (missing.isNotEmpty()) Text("Not included yet (scores still being verified): " + missing.joinToString { it.fullName }, fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+
+// ---------------- Theme button, small design pieces ----------------
+/** True when the screen is currently dark, whether that comes from the phone or from the setting. */
+@Composable
+fun isDarkNow(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
+/** Sun or moon icon that flips between light and dark mode. Used on the login, welcome and help screens. */
+@Composable
+fun ThemeToggleButton(tint: Color = LocalContentColor.current) {
+    val dark = isDarkNow()
+    IconButton(onClick = { Prefs.updateTheme(if (dark) "light" else "dark") }) {
+        Icon(if (dark) VIcons.Sun else VIcons.Moon, contentDescription = if (dark) "Switch to light mode" else "Switch to dark mode", tint = tint)
+    }
+}
+
+fun programColor(program: String): Color = PALETTE[(program.hashCode() and Int.MAX_VALUE) % PALETTE.size]
+
+/** Program name with its own accent color, so BSIT, BSCS and the rest are easy to tell apart. */
+@Composable
+fun ProgramChip(program: String) {
+    val c = programColor(program)
+    Row(Modifier.clip(RoundedCornerShape(50)).background(c.copy(alpha = 0.18f)).padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(7.dp).clip(CircleShape).background(c))
+        Spacer(Modifier.width(5.dp))
+        Text(program, fontSize = 11.sp)
+    }
+}
+
+/** Upcoming, Open, Closed as a small timeline. The current stage is bold. */
+@Composable
+fun ElectionTimeline(status: String, onColor: Color) {
+    val steps = listOf("upcoming" to "Upcoming", "open" to "Open", "closed" to "Closed")
+    val now = steps.indexOfFirst { it.first == status }.coerceAtLeast(0)
+    Row(Modifier.fillMaxWidth().semantics { contentDescription = "Election stage: ${steps[now].second}" }, verticalAlignment = Alignment.CenterVertically) {
+        steps.forEachIndexed { i, (_, label) ->
+            Box(Modifier.size(10.dp).clip(CircleShape).background(if (i <= now) MaterialTheme.colorScheme.primary else onColor.copy(alpha = 0.3f)))
+            Spacer(Modifier.width(4.dp))
+            Text(label, fontSize = 11.sp, fontWeight = if (i == now) FontWeight.Bold else FontWeight.Normal, color = onColor)
+            if (i < steps.lastIndex) Box(Modifier.weight(1f).padding(horizontal = 6.dp).height(2.dp).background(if (i < now) MaterialTheme.colorScheme.primary else onColor.copy(alpha = 0.3f)))
+        }
+    }
+}
+
+/** Choose, Review, Done. step = 1, 2 or 3 is the current step; 4 means all three are finished. */
+@Composable
+fun StepStrip(step: Int) {
+    val labels = listOf("Choose", "Review", "Done")
+    Row(Modifier.fillMaxWidth().semantics { contentDescription = if (step > 3) "Voting steps complete" else "Voting step $step of 3" }, verticalAlignment = Alignment.CenterVertically) {
+        labels.forEachIndexed { i, l ->
+            val n = i + 1
+            val on = n <= step
+            Box(Modifier.size(22.dp).clip(CircleShape).background(if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                if (n < step) Icon(VIcons.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
+                else Text("$n", fontSize = 11.sp, color = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.width(6.dp))
+            Text(l, fontSize = 12.sp, fontWeight = if (n == step) FontWeight.Bold else FontWeight.Normal)
+            if (i < labels.lastIndex) Box(Modifier.weight(1f).padding(horizontal = 8.dp).height(2.dp).background(if (n < step) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant))
+        }
+    }
+}
+
+// ---------------- Welcome tour (before login) ----------------
+private data class WelcomePage(val icon: androidx.compose.ui.graphics.vector.ImageVector?, val title: String, val body: String, val points: List<String>)
+
+@Composable
+fun WelcomeScreen(onDone: () -> Unit) {
+    val pages = remember {
+        listOf(
+            WelcomePage(null, "Welcome to VotEra", "A simulated student election, built for a research study at PUP Quezon City.", emptyList()),
+            WelcomePage(VIcons.People, "Know your candidates", "Read every platform before you decide.",
+                listOf("Open a candidate to see the platform, achievements and credibility score", "Compare candidates side by side", "Try Match me to see who fits what you care about")),
+            WelcomePage(VIcons.Check, "Vote once, keep a receipt", "Voting takes three short steps.",
+                listOf("Choose a candidate", "Review and confirm. A vote cannot be changed", "Keep your transaction ID as proof")),
+            WelcomePage(VIcons.Bars, "Live results, your privacy", "Results update as votes come in.",
+                listOf("Other students see totals only", "Candidates and data are fictional", "Handled under the Data Privacy Act of 2012 (R.A. 10173)"))
+        )
+    }
+    val pager = rememberPagerState(pageCount = { pages.size })
+    val scope = rememberCoroutineScope()
+    val last = pager.currentPage == pages.lastIndex
+    BackHandler { onDone() }
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                if (last) Spacer(Modifier.height(48.dp)) else TextButton(onClick = onDone) { Text("Skip") }
+                ThemeToggleButton()
+            }
+            HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth()) { i ->
+                val p = pages[i]
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    if (p.icon == null) Logo(210.dp)
+                    else Box(Modifier.size(96.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                        Icon(p.icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
+                    }
+                    Spacer(Modifier.height(24.dp))
+                    Text(p.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(8.dp))
+                    Text(p.body, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (p.points.isNotEmpty()) {
+                        Spacer(Modifier.height(16.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            p.points.forEach { pt ->
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Box(Modifier.padding(top = 7.dp).size(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(pt, fontSize = 14.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                pages.indices.forEach { i ->
+                    val w by animateDpAsState(if (i == pager.currentPage) 22.dp else 8.dp, label = "dot")
+                    Box(Modifier.padding(horizontal = 3.dp).height(8.dp).width(w).clip(RoundedCornerShape(4.dp))
+                        .background(if (i == pager.currentPage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant))
+                }
+            }
+            Button(onClick = { if (last) onDone() else scope.launch { pager.animateScrollToPage(pager.currentPage + 1) } }, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Text(if (last) "Get started" else "Next")
+            }
+        }
+    }
+}
+
+// ---------------- Help center: FAQ, how the score works, privacy ----------------
+@Composable
+private fun FaqItem(q: String, a: String) {
+    var open by remember { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth().clickable { open = !open }) {
+        Column(Modifier.padding(14.dp).animateContentSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(q, Modifier.weight(1f), fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                Text(if (open) "Hide" else "Show", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+            }
+            if (open) Text(a, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun MethodCard(n: String, title: String, body: String) {
+    Card(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+            Box(Modifier.size(26.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
+                Text(n, color = MaterialTheme.colorScheme.onPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                Text(body, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+fun HelpCenter(onBack: () -> Unit, onTour: () -> Unit) {
+    BackHandler { onBack() }
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().background(MAROON).padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(VIcons.Back, contentDescription = "Back", tint = Color.White) }
+                Text("Help and privacy", Modifier.weight(1f), color = Color.White, fontSize = 18.sp)
+                ThemeToggleButton(tint = Color.White)
+            }
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Quick answers", style = MaterialTheme.typography.titleMedium)
+                FaqItem("Why do I get a one-time password?", "Logging in needs your password and then a 6-digit code as a second check. In this prototype the code is shown on screen. A real system would send it by SMS or email.")
+                FaqItem("Can I change my vote?", "No. Each student can vote once, and a vote cannot be changed after it is recorded. You get a receipt with a transaction ID.")
+                FaqItem("What is the transaction ID?", "A SHA-256 hash made from your student number and the election. It does not show your student number, and you can keep it as proof that your vote was recorded.")
+                FaqItem("What does a flagged manifesto mean?", "The manifesto is 70% or more similar to another candidate's. It is only flagged for an administrator to review. It is not a rejection and the candidate stays in the election.")
+                FaqItem("Who can see how I voted?", "Other students see totals only. Election administrators can see the vote audit, which is part of how the system is checked.")
+                FaqItem("The app says Reconnecting or No connection.", "The free server may be waking up, which can take up to a minute. The app keeps the last information it loaded and updates again when the connection returns. Pull down on a list to refresh.")
+                FaqItem("Is this a real election?", "No. It is a simulated Supreme Student Council election with fictional candidates and sample voter accounts, made for a research study.")
+
+                Spacer(Modifier.height(6.dp))
+                Text("How the credibility score works", style = MaterialTheme.typography.titleMedium)
+                MethodCard("1", "Originality (35%)", "TF-IDF turns each manifesto into numbers by weighting words that are rare across all manifestos. Cosine similarity then compares two manifestos. Originality = 100 minus the highest similarity x 100.")
+                MethodCard("2", "Verified scores (30%, 20%, 15%)", "The administrator scores achievements (30%), leadership (20%) and community involvement (15%) from validated documents.")
+                MethodCard("3", "Weighted Sum Model", "The four scores are multiplied by their weights and added up into one Credibility Score from 0 to 100.")
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Weights", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(Modifier.fillMaxWidth().height(14.dp).clip(RoundedCornerShape(7.dp))) {
+                            listOf(35f to PALETTE[0], 30f to PALETTE[1], 20f to PALETTE[2], 15f to PALETTE[3]).forEach { (w, c) -> Box(Modifier.weight(w).fillMaxHeight().background(c)) }
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            listOf("Originality 35", "Achievements 30", "Leadership 20", "Community 15").forEach { Text(it, fontSize = 10.sp) }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(6.dp))
+                Text("Your privacy", style = MaterialTheme.typography.titleMedium)
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Data Privacy Act of 2012 (R.A. 10173)", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text("Taking part is voluntary. Personal and academic information is handled with strict confidentiality and results are reported in aggregate. " +
+                            "Passwords are stored as bcrypt hashes, and all candidates and voters in this prototype are fictional.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+                OutlinedButton(onClick = onTour, modifier = Modifier.fillMaxWidth()) { Text("Show the welcome tour again") }
+                Spacer(Modifier.height(8.dp))
+            }
+        }
     }
 }
