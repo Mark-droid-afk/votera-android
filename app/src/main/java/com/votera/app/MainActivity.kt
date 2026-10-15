@@ -105,6 +105,9 @@ class AppVM : ViewModel() {
     var busy by mutableStateOf(false)
     var refreshing by mutableStateOf(false)
     var message by mutableStateOf<String?>(null)
+    /** Title and text of the "done" dialog shown after something important succeeds. */
+    var success by mutableStateOf<Pair<String, String>?>(null)
+    var confirmLogout by mutableStateOf(false)
     var liveState by mutableStateOf("off")  // live, reconnecting or off (off = refreshing every 15 seconds)
     var showReceipt by mutableStateOf(false)
     var showTutorial by mutableStateOf(false)
@@ -344,13 +347,13 @@ class AppVM : ViewModel() {
     fun saveScores(id: Int, a: Double, l: Double, c: Double) = launchTask {
         Net.api.setScores(id, ScoresReq(a, l, c))
         loadAll()
-        message = "Scores saved"
+        success = "Scores saved" to "The scores were saved and the credibility was recalculated."
     }
     fun postAnnouncement(title: String, body: String, category: String, pinned: Boolean, image: ByteArray?) = launchTask {
         val a = Net.api.postAnnouncement(AnnouncementReq(title, body, category, pinned))
         if (image != null) Net.api.uploadAnnouncementImage(a.id, jpegBody(image))
         announcements = Net.api.announcements()
-        message = "Post published"
+        success = "Post published" to "Students can now see it in Updates."
     }
     fun setPostPinned(a: AnnouncementDto) = launchTask {
         Net.api.editAnnouncement(a.id, AnnouncementEditReq(pinned = !a.pinned))
@@ -359,29 +362,29 @@ class AppVM : ViewModel() {
     fun deletePost(a: AnnouncementDto) = launchTask {
         Net.api.deleteAnnouncement(a.id)
         announcements = Net.api.announcements()
-        message = "Post deleted"
+        success = "Post deleted" to "The post was removed from Updates."
     }
     fun addCandidate(req: CandidateReq, photo: ByteArray?) = launchTask {
         val c = Net.api.addCandidate(req)
         if (photo != null) Net.api.uploadPhoto(c.id, jpegBody(photo))
         loadAll()
-        message = "Candidate added. Similarity and credibility were recomputed."
+        success = "Candidate added" to "Similarity and credibility were recomputed for every candidate."
     }
     fun editCandidate(id: Int, req: CandidateReq, photo: ByteArray?) = launchTask {
         Net.api.editCandidate(id, req)
         if (photo != null) Net.api.uploadPhoto(id, jpegBody(photo))
         loadAll()
-        message = "Candidate updated. Similarity and credibility were recomputed."
+        success = "Candidate updated" to "Similarity and credibility were recomputed for every candidate."
     }
     fun deleteCandidate(id: Int) = launchTask {
         Net.api.deleteCandidate(id)
         loadAll()
-        message = "Candidate removed"
+        success = "Candidate removed" to "The candidate was removed from the ballot."
     }
     fun removePhoto(id: Int) = launchTask {
         Net.api.deletePhoto(id)
         loadAll()
-        message = "Photo removed"
+        success = "Photo removed" to "The candidate now shows the initials avatar."
     }
     /** Sends the sheet (CSV text) to the server, which checks every row and reports what was added and what was skipped. */
     fun importVoters(csv: String) = launchTask {
@@ -409,12 +412,12 @@ class AppVM : ViewModel() {
     fun resetElection() = launchTask {
         val r = Net.api.resetElection()
         loadAll()
-        message = "Election reset. ${r.votesRemoved} votes removed."
+        success = "Election reset" to "${r.votesRemoved} votes were removed and the election is ready again."
     }
     fun demoFill(count: Int) = launchTask {
         val r = Net.api.demoFill(DemoReq(count))
         loadAll()
-        message = "Added ${r.added} demo votes"
+        success = "Demo votes added" to "${r.added} sample votes were added. Reset the election when you are done."
     }
     /** Downloads the vote list as CSV text; the screen then hands it to the Android share sheet. */
     fun exportVotes(onText: (String) -> Unit) = launchTask {
@@ -685,7 +688,7 @@ fun AppShell(vm: AppVM) {
                     if (!showSettings) {
                         IconButton(onClick = { vm.showTutorial = true }) { Icon(VIcons.Help, contentDescription = "How to use VotEra") }
                         IconButton(onClick = { showSettings = true }) { Icon(VIcons.Tune, contentDescription = "Settings") }
-                        IconButton(onClick = { tab = "candidates"; detailId = null; vm.logout() }) { Icon(VIcons.Logout, contentDescription = "Log out") }
+                        IconButton(onClick = { vm.confirmLogout = true }) { Icon(VIcons.Logout, contentDescription = "Log out") }
                     }
                 }
             ) }
@@ -781,6 +784,14 @@ fun AppShell(vm: AppVM) {
             if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
         }
     }
+
+    if (vm.confirmLogout) AlertDialog(
+        onDismissRequest = { vm.confirmLogout = false },
+        title = { Text("Log out?") },
+        text = { Text("You will need your student number and password again, and a new OTP, to get back in.") },
+        confirmButton = { TextButton(onClick = { vm.confirmLogout = false; tab = "candidates"; detailId = null; showSettings = false; vm.logout() }) { Text("Log out") } },
+        dismissButton = { TextButton(onClick = { vm.confirmLogout = false }) { Text("Stay") } })
+    vm.success?.let { (t, d) -> SuccessDialog(t, d) { vm.success = null } }
 
     confirm?.let { c ->
         ModalBottomSheet(onDismissRequest = { confirm = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
