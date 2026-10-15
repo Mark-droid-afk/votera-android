@@ -27,6 +27,21 @@ private fun Row3(a: String, b: String, c: String, bold: Boolean = false, wa: Flo
     }
 }
 
+/** Results grouped by position, in ballot order. */
+fun resultGroups(rows: List<ResultRowDto>): List<Pair<String, List<ResultRowDto>>> =
+    rows.groupBy { it.position }.toList().sortedBy { positionRank(it.first) }
+
+private fun winnerLine(rows: List<ResultRowDto>, closed: Boolean): String {
+    val top = rows.maxOfOrNull { it.votes } ?: 0
+    val leaders = rows.filter { it.votes == top && top > 0 }
+    return when {
+        leaders.isEmpty() -> "No votes yet."
+        leaders.size > 1 -> "Tie for first: ${leaders.joinToString { it.fullName }}."
+        closed -> "Winner: ${leaders[0].fullName}."
+        else -> "Leading: ${leaders[0].fullName}."
+    }
+}
+
 /** The same report as plain text, for sharing to Docs, Messenger, email and so on. */
 fun buildReportText(vm: AppVM): String {
     val e = vm.election
@@ -39,8 +54,12 @@ fun buildReportText(vm: AppVM): String {
     if (res != null) {
         sb.appendLine("Turnout: ${res.turnout.votesCast} of ${res.turnout.eligibleVoters} eligible voters (${fmt(res.turnout.turnoutPercent)}%)")
         sb.appendLine()
-        sb.appendLine("Ranking (hash map tally, Quick Sort, highest to lowest)")
-        res.results.forEach { sb.appendLine("${it.rank}. ${it.fullName}: ${it.votes} votes (${fmt(it.percent)}%)") }
+        sb.appendLine("Ranking per position (hash map tally, Quick Sort, highest to lowest)")
+        resultGroups(res.results).forEach { (pos, rows) ->
+            sb.appendLine(pos)
+            rows.forEach { sb.appendLine("  ${it.rank}. ${it.fullName}: ${it.votes} votes (${fmt(it.percent)}%)") }
+            sb.appendLine("  " + winnerLine(rows, res.election.status == "closed"))
+        }
         sb.appendLine()
     }
     sb.appendLine("Turnout per program")
@@ -83,19 +102,17 @@ fun AdminReport(vm: AppVM) {
             }
             Card {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Final ranking", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    Row3("Candidate", "Votes", "Share", bold = true)
-                    HorizontalDivider()
-                    res.results.forEach { Row3("${it.rank}. ${it.fullName}", "${it.votes}", "${fmt(it.percent)}%", bold = it.rank == 1 && it.votes > 0) }
-                    val top = res.results.maxOfOrNull { it.votes } ?: 0
-                    val leaders = res.results.filter { it.votes == top && top > 0 }
+                    Text("Final ranking per position", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                    resultGroups(res.results).forEach { (pos, rows) ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(ellipsize(pos, 40), fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                        Row3("Candidate", "Votes", "Share", bold = true)
+                        HorizontalDivider()
+                        rows.forEach { Row3(ellipsize("${it.rank}. ${it.fullName}", 24), "${it.votes}", "${fmt(it.percent)}%", bold = it.rank == 1 && it.votes > 0) }
+                        Text(winnerLine(rows, res.election.status == "closed") + if (res.election.status != "closed") " The election is not closed yet." else "",
+                            fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    }
                     Spacer(Modifier.height(6.dp))
-                    Text(when {
-                        leaders.isEmpty() -> "No votes have been cast yet."
-                        leaders.size > 1 -> "Tie for first place: ${leaders.joinToString { it.fullName }}."
-                        res.election.status == "closed" -> "Winner: ${leaders[0].fullName}."
-                        else -> "Currently leading: ${leaders[0].fullName}. The election is not closed yet."
-                    }, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     Text("Counted with a hash map and ordered with Quick Sort, highest to lowest.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
