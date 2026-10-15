@@ -43,15 +43,19 @@ fun AdminTab(vm: AppVM) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("overview" to "Overview", "candidates" to "Candidates", "audit" to "Vote audit", "voters" to "Voters", "report" to "Report",
-                "activity" to "Activity", "selftest" to "Self-test").forEach { (id, label) ->
-                FilterChip(selected = sub == id, onClick = { vm.adminSub = id }, label = { Text(label) })
+            listOf(Triple("overview", "Overview", VIcons.Dashboard), Triple("posts", "Posts", VIcons.Bell), Triple("candidates", "Candidates", VIcons.People),
+                Triple("audit", "Vote audit", VIcons.Ballot), Triple("voters", "Voters", VIcons.Check), Triple("report", "Report", VIcons.Doc),
+                Triple("activity", "Activity", VIcons.Clock), Triple("selftest", "Self-test", VIcons.Shield)).forEach { (id, label, icon) ->
+                FilterChip(selected = sub == id, onClick = { vm.adminSub = id },
+                    leadingIcon = { Icon(icon, contentDescription = null, Modifier.size(16.dp)) },
+                    label = { Text(label, maxLines = 1) })
             }
         }
         AnimatedContent(targetState = sub, label = "adminSub", modifier = Modifier.fillMaxSize(),
             transitionSpec = { fadeIn(tween(220, delayMillis = 60)) togetherWith fadeOut(tween(120)) }) { s ->
             when (s) {
                 "overview" -> AdminOverview(vm)
+                "posts" -> AdminPosts(vm)
                 "candidates" -> AdminCandidates(vm)
                 "audit" -> AdminAudit(vm)
                 "report" -> AdminReport(vm)
@@ -77,8 +81,6 @@ private fun StatCard(label: String, value: String, modifier: Modifier = Modifier
 @Composable
 fun AdminOverview(vm: AppVM) {
     val ctx = LocalContext.current
-    var title by remember { mutableStateOf("") }
-    var body by remember { mutableStateOf("") }
     var pendingStatus by remember { mutableStateOf<String?>(null) }
     var confirmReset by remember { mutableStateOf(false) }
     var confirmDemo by remember { mutableStateOf(false) }
@@ -156,17 +158,6 @@ fun AdminOverview(vm: AppVM) {
                     }
                     Text("Flagged at 70% similarity or higher. A flag does not reject a candidate.", fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-        item {
-            Card {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Post an announcement", style = MaterialTheme.typography.titleMedium)
-                    OutlinedTextField(title, { title = cleanText(it, 80) }, label = { Text("Title") }, supportingText = { Text("${title.length}/80") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(body, { body = it.take(500) }, label = { Text("Message") }, supportingText = { Text("${body.length}/500") }, modifier = Modifier.fillMaxWidth())
-                    Button(onClick = { vm.postAnnouncement(title.trim(), body.trim()); title = ""; body = "" },
-                        enabled = title.isNotBlank() && !vm.busy) { Text("Post") }
                 }
             }
         }
@@ -289,9 +280,9 @@ fun AdminCandidates(vm: AppVM) {
                             fontSize = 12.sp, color = if (c.flagged) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             val kb = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                            OutlinedTextField(a, { a = it }, label = { Text("Achievements") }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
-                            OutlinedTextField(l, { l = it }, label = { Text("Leadership") }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
-                            OutlinedTextField(m, { m = it }, label = { Text("Community") }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
+                            OutlinedTextField(a, { a = it }, label = { Text("Ach.", maxLines = 1) }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
+                            OutlinedTextField(l, { l = it }, label = { Text("Lead.", maxLines = 1) }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
+                            OutlinedTextField(m, { m = it }, label = { Text("Comm.", maxLines = 1) }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Button(onClick = {
@@ -332,7 +323,10 @@ fun AdminCandidates(vm: AppVM) {
 fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto: () -> Unit, onSave: (CandidateReq, ByteArray?) -> Unit) {
     var name by remember { mutableStateOf(initial?.fullName ?: "") }
     var program by remember { mutableStateOf(initial?.program ?: "") }
-    var position by remember { mutableStateOf(initial?.position ?: "SSC President") }
+    val initPos = initial?.position?.let { findPosition(it)?.name ?: it } ?: ""
+    var position by remember { mutableStateOf(initPos) }
+    var customPos by remember { mutableStateOf(initial != null && initPos.isNotBlank() && findPosition(initPos) == null) }
+    var posMenu by remember { mutableStateOf(false) }
     var manifesto by remember { mutableStateOf(initial?.manifesto ?: "") }
     var ach by remember { mutableStateOf(initial?.achievements ?: "") }
     var lead by remember { mutableStateOf(initial?.leadership ?: "") }
@@ -371,7 +365,26 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
                 }
                 OutlinedTextField(name, { name = cleanText(it, 60) }, label = { Text("Full name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(program, { program = cleanText(it, 40) }, label = { Text("Program") }, supportingText = { Text("${program.length}/40") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(position, { position = cleanText(it, 40) }, label = { Text("Position") }, supportingText = { Text("${position.length}/40") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                ExposedDropdownMenuBox(expanded = posMenu, onExpandedChange = { posMenu = it }) {
+                    OutlinedTextField(
+                        value = if (customPos) "Other (type your own)" else position.ifBlank { "" },
+                        onValueChange = {}, readOnly = true, singleLine = true,
+                        label = { Text("Position") }, placeholder = { Text("Choose a position") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = posMenu) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth())
+                    ExposedDropdownMenu(expanded = posMenu, onDismissRequest = { posMenu = false }) {
+                        SSC_POSITIONS.forEach { p ->
+                            DropdownMenuItem(text = { Text(p.name, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                                onClick = { position = p.name; customPos = false; posMenu = false })
+                        }
+                        DropdownMenuItem(text = { Text("Other (type your own)") },
+                            onClick = { if (!customPos) position = ""; customPos = true; posMenu = false })
+                    }
+                }
+                if (customPos) OutlinedTextField(position, { position = cleanText(it, 60) }, label = { Text("Custom position name") },
+                    supportingText = { Text("${position.length}/60. Example: Sports Councilor") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                else findPosition(position)?.let { Text(it.duty, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 4,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
                 OutlinedTextField(manifesto, { manifesto = it.take(2000) }, label = { Text("Manifesto") }, supportingText = { Text("${manifesto.length}/2000") }, minLines = 3, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(ach, { ach = it.take(600) }, label = { Text("Verified achievements") }, supportingText = { Text("${ach.length}/600") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(lead, { lead = it.take(600) }, label = { Text("Leadership experience") }, supportingText = { Text("${lead.length}/600") }, modifier = Modifier.fillMaxWidth())
@@ -399,6 +412,7 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
                 val bad = scores.any { it.isNotBlank() && (score(it) == null || score(it)!! < 0 || score(it)!! > 100) }
                 when {
                     name.isBlank() -> error = "Enter the candidate's name"
+                    position.isBlank() -> error = "Choose a position, or pick Other and type one"
                     bad -> error = "Scores must be numbers from 0 to 100"
                     else -> onSave(CandidateReq(name.trim(), program.trim(), position.trim(), manifesto.trim(), ach.trim(), lead.trim(), comm.trim(),
                         score(sa), score(sl), score(sc), normalizeUrl(video), qa.trim().ifBlank { null }), photoBytes)
@@ -435,11 +449,11 @@ fun AdminAudit(vm: AppVM) {
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(ellipsize(v.fullName.ifBlank { v.studentNumber }, 26), fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
-                            Text("${v.studentNumber} | ${ellipsize(v.program, 20)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${v.studentNumber} | ${ellipsize(v.program, 20)}", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text(ellipsize(v.candidateName, 22), maxLines = 1, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)
                     }
-                    Text("${v.castAt.replace("T", " ").take(16)} | TX ${v.transactionId.take(12)}...", fontSize = 11.sp,
+                    Text("${ellipsize(posShort(v.position), 14)} | ${v.castAt.replace("T", " ").take(16)} | TX ${v.transactionId.take(8)}...", fontSize = 11.sp, maxLines = 1,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -489,7 +503,7 @@ fun AdminVoters(vm: AppVM) {
                     Text(ellipsize(v.fullName, 28), fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                     Text("${v.studentNumber} | ${ellipsize(v.program, 20)}" + (v.respondentCode?.let { " | $it" } ?: ""), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text(if (v.hasVoted) "Voted" else "Not yet", fontSize = 12.sp,
+                Text(if (v.positionsTotal > 1 && v.positionsVoted > 0) "Voted ${v.positionsVoted}/${v.positionsTotal}" else if (v.hasVoted) "Voted" else "Not yet", fontSize = 12.sp, maxLines = 1,
                     color = if (v.hasVoted) GREEN else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
             }
         }
