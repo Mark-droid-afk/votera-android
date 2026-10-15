@@ -136,7 +136,7 @@ fun AdminOverview(vm: AppVM) {
                     vm.turnoutRows.forEach { r ->
                         Column {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(r.program, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                                Text(ellipsize(r.program, 22), fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
                                 Text("${r.voted}/${r.eligible} (${fmt(r.percent)}%)", fontSize = 13.sp)
                             }
                             Spacer(Modifier.height(3.dp))
@@ -152,7 +152,7 @@ fun AdminOverview(vm: AppVM) {
                     Text("Flagged manifestos for review", style = MaterialTheme.typography.titleMedium)
                     if (vm.flagged.isEmpty()) Text("None flagged.", fontSize = 13.sp)
                     vm.flagged.forEach {
-                        Text("${it.fullName}: ${fmt((it.highestSimilarity ?: 0.0) * 100)}% similar to ${it.mostSimilarName ?: "another candidate"}", fontSize = 13.sp)
+                        Text("${ellipsize(it.fullName, 22)}: ${fmt((it.highestSimilarity ?: 0.0) * 100)}% similar to ${ellipsize(it.mostSimilarName ?: "another candidate", 22)}", fontSize = 13.sp)
                     }
                     Text("Flagged at 70% similarity or higher. A flag does not reject a candidate.", fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -163,8 +163,8 @@ fun AdminOverview(vm: AppVM) {
             Card {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Post an announcement", style = MaterialTheme.typography.titleMedium)
-                    OutlinedTextField(title, { title = it }, label = { Text("Title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(body, { body = it }, label = { Text("Message") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(title, { title = cleanText(it, 80) }, label = { Text("Title") }, supportingText = { Text("${title.length}/80") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(body, { body = it.take(500) }, label = { Text("Message") }, supportingText = { Text("${body.length}/500") }, modifier = Modifier.fillMaxWidth())
                     Button(onClick = { vm.postAnnouncement(title.trim(), body.trim()); title = ""; body = "" },
                         enabled = title.isNotBlank() && !vm.busy) { Text("Post") }
                 }
@@ -279,8 +279,8 @@ fun AdminCandidates(vm: AppVM) {
                             CandidateAvatar(c, 48.dp)
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(c.fullName, fontWeight = FontWeight.Bold)
-                                Text("${c.position} | ${c.program}", fontSize = 12.sp)
+                                Text(ellipsize(c.fullName, 28), fontWeight = FontWeight.Bold, maxLines = 1)
+                                Text("${ellipsize(c.position, 20)} | ${ellipsize(c.program, 20)}", fontSize = 12.sp, maxLines = 1)
                             }
                             CredRing(c.credibilityScore, 46.dp, 4.dp)
                         }
@@ -369,17 +369,17 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
                         Text("Square photos look best.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                OutlinedTextField(name, { name = it }, label = { Text("Full name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(program, { program = it }, label = { Text("Program") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(position, { position = it }, label = { Text("Position") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(manifesto, { manifesto = it }, label = { Text("Manifesto") }, minLines = 3, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(ach, { ach = it }, label = { Text("Verified achievements") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(lead, { lead = it }, label = { Text("Leadership experience") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(comm, { comm = it }, label = { Text("Community involvement") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(video, { video = it }, label = { Text("Platform video link (optional)") }, singleLine = true,
+                OutlinedTextField(name, { name = cleanText(it, 60) }, label = { Text("Full name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(program, { program = cleanText(it, 40) }, label = { Text("Program") }, supportingText = { Text("${program.length}/40") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(position, { position = cleanText(it, 40) }, label = { Text("Position") }, supportingText = { Text("${position.length}/40") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(manifesto, { manifesto = it.take(2000) }, label = { Text("Manifesto") }, supportingText = { Text("${manifesto.length}/2000") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(ach, { ach = it.take(600) }, label = { Text("Verified achievements") }, supportingText = { Text("${ach.length}/600") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(lead, { lead = it.take(600) }, label = { Text("Leadership experience") }, supportingText = { Text("${lead.length}/600") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(comm, { comm = it.take(600) }, label = { Text("Community involvement") }, supportingText = { Text("${comm.length}/600") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(video, { video = it.trim().take(300) }, label = { Text("Platform video link (optional)") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(qa, { qa = it }, label = { Text("Questions and answers (optional)") }, minLines = 2,
-                    supportingText = { Text("Example: Q: Why are you running? A: To ...") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(qa, { qa = it.take(1500) }, label = { Text("Questions and answers (optional)") }, minLines = 2,
+                    supportingText = { Text("${qa.length}/1500. Example: Q: Why are you running? A: To ...") }, modifier = Modifier.fillMaxWidth())
                 Text("Scores 0 to 100 (optional now, can be entered later)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val kb = KeyboardOptions(keyboardType = KeyboardType.Decimal)
@@ -434,10 +434,10 @@ fun AdminAudit(vm: AppVM) {
                         Avatar(v.fullName.ifBlank { v.studentNumber }, v.studentNumber.hashCode(), 36.dp)
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(v.fullName.ifBlank { v.studentNumber }, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("${v.studentNumber} | ${v.program}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(ellipsize(v.fullName.ifBlank { v.studentNumber }, 26), fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
+                            Text("${v.studentNumber} | ${ellipsize(v.program, 20)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text(v.candidateName, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)
+                        Text(ellipsize(v.candidateName, 22), maxLines = 1, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)
                     }
                     Text("${v.castAt.replace("T", " ").take(16)} | TX ${v.transactionId.take(12)}...", fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -486,8 +486,8 @@ fun AdminVoters(vm: AppVM) {
                 Avatar(v.fullName, v.studentNumber.hashCode(), 36.dp)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(v.fullName, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text("${v.studentNumber} | ${v.program}" + (v.respondentCode?.let { " | $it" } ?: ""), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(ellipsize(v.fullName, 28), fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                    Text("${v.studentNumber} | ${ellipsize(v.program, 20)}" + (v.respondentCode?.let { " | $it" } ?: ""), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text(if (v.hasVoted) "Voted" else "Not yet", fontSize = 12.sp,
                     color = if (v.hasVoted) GREEN else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Medium)
@@ -591,7 +591,7 @@ fun AddOneVoterDialog(vm: AppVM, onDismiss: () -> Unit) {
                 OutlinedTextField(sn, { sn = it.uppercase().filter { ch -> ch.isLetterOrDigit() || ch == '-' } }, label = { Text("Student number") },
                     placeholder = { Text("2020-00000-CM-0") }, isError = sn.isNotEmpty() && !snOk,
                     supportingText = { Text("Format: YYYY-NNNNN-CM-N") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(name, { name = it }, label = { Text("Full name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(name, { name = cleanText(it, 60) }, label = { Text("Full name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Box {
                     OutlinedButton(onClick = { menu = true }, modifier = Modifier.fillMaxWidth()) { Text(program, maxLines = 1) }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
