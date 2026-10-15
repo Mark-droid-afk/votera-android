@@ -140,7 +140,7 @@ fun SettingsScreen(vm: AppVM) {
         OutlinedButton(onClick = { vm.showHelp = true }, modifier = Modifier.fillMaxWidth()) { Text("Help, FAQ and privacy") }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedButton(onClick = { confirmReset = true }, modifier = Modifier.weight(1f)) { Text("Reset settings") }
-            Button(onClick = { vm.logout() }, modifier = Modifier.weight(1f)) { Text("Log out") }
+            Button(onClick = { vm.confirmLogout = true }, modifier = Modifier.weight(1f)) { Text("Log out") }
         }
         Spacer(Modifier.height(8.dp))
     }
