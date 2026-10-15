@@ -76,6 +76,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -118,6 +120,8 @@ class AppVM : ViewModel() {
     var loaded by mutableStateOf(false)               // true after the first full load, so lists show placeholders instead of "empty" while loading
     var offline by mutableStateOf(false)              // last background refresh could not reach the server
     var banner by mutableStateOf<AnnouncementDto?>(null)  // a new announcement that just arrived (students)
+    var showWelcome by mutableStateOf(!Prefs.welcomeSeen)  // welcome tour, shown on first launch and from the help center
+    var showHelp by mutableStateOf(false)             // help center: FAQ, how the score works, privacy
     var matchMode by mutableStateOf(false)            // Compare tab: false = side by side, true = "Match me"
     var priorities by mutableStateOf(listOf(5f, 5f, 5f, 5f))  // Match me: originality, achievements, leadership, community (0 to 10)
     var auditLog by mutableStateOf<List<AuditDto>>(emptyList())
@@ -130,7 +134,8 @@ class AppVM : ViewModel() {
     private var liveJob: Job? = null
     private var pollJob: Job? = null
     private var syncing = false
-    private var syncAgain = false
+    private var pendingAll = false                       // a full refresh is waiting
+    private val pendingTopics = mutableSetOf<String>()   // topics that changed while a refresh was running
 
     private fun handleError(t: Throwable) {
         if (t is HttpException && t.code() == 401 && stage == "main") {
@@ -158,25 +163,50 @@ class AppVM : ViewModel() {
         deadline = e.secondsLeft?.let { SystemClock.elapsedRealtime() + it * 1000L }
     }
 
-    private suspend fun loadAll() {
+    /** Loads what the screens need. All the requests run at the same time, so the wait is one round trip instead of
+     *  eight in a row. topics = null loads everything; a live "changed" message lists only what changed, so a student's
+     *  phone refetches just the results when someone votes. */
+    private suspend fun loadAll(topics: Set<String>? = null) = coroutineScope {
         val api = Net.api
-        applyElection(api.election())
-        candidates = api.candidates()
-        val fresh = api.announcements()
-        val seen = knownAnnouncements
-        if (seen != null && user?.role == "student") fresh.firstOrNull { it.id !in seen }?.let { banner = it }
-        knownAnnouncements = fresh.map { it.id }.toSet()
-        announcements = fresh
-        results = api.results()
-        if (user?.role == "student") voteStatus = api.voteStatus()
-        if (user?.role == "admin") {
-            flagged = api.flagged().flagged
-            votes = api.votes()
-            voters = api.voters()
-            turnoutRows = api.turnoutByProgram()
+        val want: (String) -> Boolean = { t -> topics == null || t in topics }
+        val admin = user?.role == "admin"
+        val student = user?.role == "student"
+        val dElection = if (want("election")) async { api.election() } else null
+        val dCandidates = if (want("candidates")) async { api.candidates() } else null
+        val dAnnouncements = if (want("announcements")) async { api.announcements() } else null
+        val dResults = if (want("results")) async { api.results() } else null
+        val dVote = if (student && topics == null) async { api.voteStatus() } else null
+        val dFlagged = if (admin && want("candidates")) async { api.flagged().flagged } else null
+        val dVotes = if (admin && want("results")) async { api.votes() } else null
+        val dVoters = if (admin && (want("results") || want("voters"))) async { api.voters() } else null
+        val dTurnout = if (admin && (want("results") || want("voters"))) async { api.turnoutByProgram() } else null
+
+        dElection?.let { applyElection(it.await()) }
+        dCandidates?.let { candidates = it.await() }
+        dAnnouncements?.let {
+            val fresh = it.await()
+            val seen = knownAnnouncements
+            if (seen != null && user?.role == "student") fresh.firstOrNull { a -> a.id !in seen }?.let { a -> banner = a }
+            knownAnnouncements = fresh.map { a -> a.id }.toSet()
+            announcements = fresh
         }
-        loaded = true
+        dResults?.let { results = it.await() }
+        dVote?.let { voteStatus = it.await() }
+        dFlagged?.let { flagged = it.await() }
+        dVotes?.let { votes = it.await() }
+        dVoters?.let { voters = it.await() }
+        dTurnout?.let { turnoutRows = it.await() }
+        if (topics == null) loaded = true
         offline = false
+    }
+
+    /** Wakes the free server and database while the person is still typing the login, so the first login is not slow. */
+    fun prewarm() {
+        viewModelScope.launch {
+            try { Net.api.healthDb() }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { }
+        }
     }
 
     /** portal is "student" or "admin": the login screen the person used. The server rejects a mismatch. */
@@ -212,21 +242,24 @@ class AppVM : ViewModel() {
     }
 
     /** Quiet refresh used by live sync: no loading bar, and events that arrive mid-refresh are merged into one more pass. */
-    private fun quickSync() {
+    private fun quickSync(topics: Set<String>? = null) {
         viewModelScope.launch {
             if (stage != "main") return@launch
-            if (syncing) { syncAgain = true; return@launch }
+            if (topics == null || topics.isEmpty()) pendingAll = true else pendingTopics.addAll(topics)
+            if (syncing) return@launch
             syncing = true
             try {
-                do {
-                    syncAgain = false
-                    try { loadAll() }
+                while (stage == "main" && (pendingAll || pendingTopics.isNotEmpty())) {
+                    val t: Set<String>? = if (pendingAll) null else pendingTopics.toSet()
+                    pendingAll = false
+                    pendingTopics.clear()
+                    try { loadAll(t) }
                     catch (e: CancellationException) { throw e }
-                    catch (t: Throwable) {
-                        if (t is HttpException && t.code() == 401) { handleError(t); return@launch }
-                        if (t is IOException) offline = true
+                    catch (ex: Throwable) {
+                        if (ex is HttpException && ex.code() == 401) { handleError(ex); return@launch }
+                        if (ex is IOException) offline = true
                     }
-                } while (syncAgain && stage == "main")
+                }
             } finally { syncing = false }
         }
     }
@@ -243,7 +276,7 @@ class AppVM : ViewModel() {
                     Live.connect(
                         token,
                         onReady = { viewModelScope.launch { liveState = "live" }; quickSync() },
-                        onChanged = { quickSync() }
+                        onChanged = { topics -> quickSync(topics) }
                     )
                     liveState = "reconnecting"
                 } else {
@@ -452,9 +485,10 @@ fun Avatar(name: String, id: Int, size: Dp = 44.dp) {
 
 @Composable
 fun Logo(height: Dp, modifier: Modifier = Modifier) {
-    Box(modifier.clip(RoundedCornerShape(24.dp)).background(Color.White)) {
-        Image(painterResource(R.drawable.votera_logo), contentDescription = "VotEra logo", modifier = Modifier.height(height))
-    }
+    // The logo has a transparent background outside the circle. The dark version has a lighter ring and wordmark so it reads on dark screens.
+    val dark = isDarkNow()
+    Image(painterResource(if (dark) R.drawable.votera_logo_dark else R.drawable.votera_logo), contentDescription = "VotEra logo",
+        modifier = modifier.height(height))
 }
 
 @Composable
@@ -555,8 +589,12 @@ fun VoteraApp(vm: AppVM = viewModel()) {
         MaterialTheme(colorScheme = when { dark && Prefs.highContrast -> HighDark; dark -> DarkColors; Prefs.highContrast -> HighLight; else -> LightColors }) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 var splash by remember { mutableStateOf(true) }
-                LaunchedEffect(Unit) { delay(1100); splash = false }
-                if (splash) SplashScreen() else AppShell(vm)
+                LaunchedEffect(Unit) { vm.prewarm(); delay(700); splash = false }
+                if (splash) SplashScreen() else Box(Modifier.fillMaxSize()) {
+                    AppShell(vm)
+                    if (vm.showHelp) HelpCenter(onBack = { vm.showHelp = false }, onTour = { vm.showHelp = false; vm.showWelcome = true })
+                    if (vm.showWelcome) WelcomeScreen(onDone = { Prefs.markWelcomeSeen(); vm.showWelcome = false })
+                }
             }
         }
     }
@@ -641,7 +679,7 @@ fun AppShell(vm: AppVM) {
                 tabs.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t.id && !showSettings,
-                        onClick = { tab = t.id; detailId = null; showSettings = false; vm.showReceipt = false },
+                        onClick = { if (tab != t.id) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); tab = t.id; detailId = null; showSettings = false; vm.showReceipt = false },
                         icon = { Icon(t.icon, contentDescription = t.label) },
                         label = { Text(t.label, fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
@@ -728,6 +766,7 @@ fun AppShell(vm: AppVM) {
     confirm?.let { c ->
         ModalBottomSheet(onDismissRequest = { confirm = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                StepStrip(2)
                 Text("Confirm your vote", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CandidateAvatar(c, 56.dp)
@@ -768,7 +807,11 @@ fun LoginScreen(vm: AppVM) {
         vm.login(sn, pw, if (admin) "admin" else "student")
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.Center) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 12.dp), verticalArrangement = Arrangement.Center) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { vm.showHelp = true }) { Icon(VIcons.Help, contentDescription = "Help, FAQ and privacy") }
+            ThemeToggleButton()
+        }
         // Tapping the logo five times opens the connection settings (kept out of sight for students).
         Logo(170.dp, Modifier.align(Alignment.CenterHorizontally).clickable { taps++; if (taps >= 5) { showServer = true; taps = 0 } })
         Spacer(Modifier.height(8.dp))
@@ -876,6 +919,7 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                                 modifier = Modifier.weight(1f))
                             StatusPill(e?.status ?: "closed")
                         }
+                        ElectionTimeline(e?.status ?: "closed", MaterialTheme.colorScheme.onPrimaryContainer)
                         vm.user?.let { Text("Signed in as ${it.fullName} (${it.studentNumber})", fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer) }
                         if (e?.status == "open") countdownText(vm.deadline)?.let {
                             Text(it, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -924,9 +968,15 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(c.fullName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text("${c.position} | ${c.program}", fontSize = 13.sp)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(c.position, fontSize = 13.sp)
+                                ProgramChip(c.program)
+                            }
+                            if (c.manifesto.isNotBlank()) Text(c.manifesto, fontSize = 12.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
                             if (c.flagged) Text("Manifesto flagged for review", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                         }
+                        Spacer(Modifier.width(8.dp))
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CredRing(c.credibilityScore, 48.dp, 4.dp)
                             Text("credibility", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -947,6 +997,7 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = onBack) { Icon(VIcons.Back, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Back to candidates") }
+        if (isStudent && open && !voted) StepStrip(1)
         Row(verticalAlignment = Alignment.CenterVertically) {
             CandidateAvatar(c, 80.dp)
             Spacer(Modifier.width(14.dp))
@@ -1008,6 +1059,7 @@ fun ReceiptScreen(vm: AppVM, onResults: () -> Unit, onDone: () -> Unit) {
     val ctx = LocalContext.current
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)) {
+        StepStrip(4)
         Box(Modifier.size(72.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
             Icon(VIcons.Check, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(40.dp))
         }
@@ -1094,7 +1146,9 @@ private fun SideBySide(vm: AppVM) {
 fun UpdatesTab(vm: AppVM) {
     PullToRefreshBox(isRefreshing = vm.refreshing, onRefresh = { vm.refresh() }, modifier = Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (vm.announcements.isEmpty()) item { Empty("No announcements yet.") }
+            if (vm.announcements.isEmpty()) {
+                if (!vm.loaded) items(3) { SkeletonCard() } else item { Empty("No announcements yet. Pull down to refresh.") }
+            }
             items(vm.announcements, key = { it.id }) { a ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
@@ -1114,16 +1168,28 @@ fun UpdatesTab(vm: AppVM) {
 fun PieChart(rows: List<ResultRowDto>) {
     val total = rows.sumOf { it.votes }
     val empty = MaterialTheme.colorScheme.surfaceVariant
+    val grow = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(Unit) { grow.animateTo(1f, tween(if (Prefs.reduceMotion) 1 else 800)) }
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(200.dp)) {
-            if (total == 0) drawCircle(empty)
-            else {
-                var start = -90f
-                rows.forEach { r ->
-                    val sweep = 360f * r.votes / total
-                    drawArc(color = PALETTE[r.candidateId % PALETTE.size], startAngle = start, sweepAngle = sweep, useCenter = true)
-                    start += sweep
+        Box(Modifier.size(220.dp).clearAndSetSemantics { contentDescription = "Donut chart of $total votes" }, contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
+                val s = 34.dp.toPx()
+                val box = Size(this.size.width - s, this.size.height - s)
+                val topLeft = Offset(s / 2, s / 2)
+                if (total == 0) drawArc(color = empty, startAngle = 0f, sweepAngle = 360f, useCenter = false, topLeft = topLeft, size = box, style = Stroke(width = s))
+                else {
+                    var start = -90f
+                    rows.forEach { r ->
+                        val sweep = 360f * r.votes / total * grow.value
+                        if (sweep > 0f) drawArc(color = PALETTE[r.candidateId % PALETTE.size], startAngle = start, sweepAngle = sweep, useCenter = false,
+                            topLeft = topLeft, size = box, style = Stroke(width = s))
+                        start += sweep
+                    }
                 }
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("$total", fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                Text(if (total == 1) "vote" else "votes", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -1136,7 +1202,8 @@ fun ResultRow(r: ResultRowDto, candidate: CandidateDto?, showBar: Boolean) {
     val leader = r.rank == 1 && r.votes > 0
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (candidate != null) CandidateAvatar(candidate, 32.dp) else Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+            if (!showBar) { Box(Modifier.size(10.dp).clip(CircleShape).background(color)); Spacer(Modifier.width(8.dp)) }
+            if (candidate != null) CandidateAvatar(candidate, 32.dp) else if (showBar) Box(Modifier.size(10.dp).clip(CircleShape).background(color))
             Spacer(Modifier.width(8.dp))
             Text("${r.rank}. ${r.fullName}", Modifier.weight(1f), fontWeight = if (leader) FontWeight.Bold else FontWeight.Normal)
             if (leader) {
@@ -1160,8 +1227,10 @@ fun ResultsTab(vm: AppVM) {
     var mode by remember { mutableStateOf("bar") }
     val res = vm.results
     PullToRefreshBox(isRefreshing = vm.refreshing, onRefresh = { vm.refresh() }, modifier = Modifier.fillMaxSize()) {
-        if (res == null) Empty("No results yet.")
-        else {
+        if (res == null) {
+            if (!vm.loaded) Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { SkeletonCard(); SkeletonCard(); SkeletonCard() }
+            else Empty("No results yet. Pull down to refresh.")
+        } else {
             val t = res.turnout
             val tp by animateFloatAsState((t.turnoutPercent / 100).toFloat().coerceIn(0f, 1f), animationSpec = tween(600), label = "turnout")
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1178,7 +1247,7 @@ fun ResultsTab(vm: AppVM) {
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = mode == "bar", onClick = { mode = "bar" }, label = { Text("Bar chart") })
-                    FilterChip(selected = mode == "pie", onClick = { mode = "pie" }, label = { Text("Pie chart") })
+                    FilterChip(selected = mode == "pie", onClick = { mode = "pie" }, label = { Text("Donut chart") })
                 }
                 if (mode == "pie") PieChart(res.results)
                 res.results.forEach { r -> ResultRow(r, vm.candidates.firstOrNull { it.id == r.candidateId }, showBar = mode == "bar") }
