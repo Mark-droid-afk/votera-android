@@ -99,7 +99,7 @@ object Prefs {
         val p = context.getSharedPreferences("votera_prefs", Context.MODE_PRIVATE)
         sp = p
         theme = p.getString("theme", "system") ?: "system"
-        textScale = p.getFloat("text_scale", 1.0f)
+        textScale = p.getFloat("text_scale", 1.0f).coerceAtMost(1.15f)  // the old "Extra large" size was removed
         live = p.getBoolean("live", true)
         rememberSn = p.getBoolean("remember_sn", false)
         savedSn = p.getString("saved_sn", "") ?: ""
@@ -166,22 +166,32 @@ data class CandidateReq(
 )
 data class ScoresReq(val achievementsScore: Double, val leadershipScore: Double, val communityScore: Double)
 data class FlaggedRes(val threshold: Double, val flagged: List<CandidateDto>)
-data class AnnouncementDto(val id: Int, val title: String, val body: String, val createdAt: String)
-data class AnnouncementReq(val title: String, val body: String)
-data class VoteStatusRes(val hasVoted: Boolean, val transactionId: String?)
+data class AnnouncementDto(val id: Int, val title: String, val body: String, val createdAt: String,
+                           val category: String = "General", val pinned: Boolean = false, val imageVersion: Int = 0)
+data class AnnouncementReq(val title: String, val body: String, val category: String = "General", val pinned: Boolean = false)
+data class AnnouncementEditReq(val title: String? = null, val body: String? = null, val category: String? = null, val pinned: Boolean? = null)
+/** One line of the ballot: a position and what this student chose for it (null until they vote). */
+data class PositionVoteDto(val position: String, val voted: Boolean, val candidateId: Int? = null, val candidateName: String? = null,
+                           val transactionId: String? = null, val votedAt: String? = null)
+data class VoteStatusRes(val hasVoted: Boolean, val complete: Boolean = false, val transactionId: String? = null,
+                         val positions: List<PositionVoteDto> = emptyList())
 data class VoteReq(val candidateId: Int)
-data class VoteRes(val message: String, val transactionId: String)
+data class VoteRes(val message: String, val transactionId: String, val position: String = "", val complete: Boolean = false)
+
+/** Announcement categories, in the order the filter chips show them. */
+val POST_CATEGORIES = listOf("General", "Schedule", "Reminder", "Rules", "Results", "Urgent")
 data class TurnoutDto(val votesCast: Int, val eligibleVoters: Int, val turnoutPercent: Double)
-data class ResultRowDto(val rank: Int, val candidateId: Int, val fullName: String, val votes: Int, val percent: Double)
-data class ResultsRes(val election: ElectionDto, val turnout: TurnoutDto, val results: List<ResultRowDto>)
+data class ResultRowDto(val position: String = "", val rank: Int, val candidateId: Int, val fullName: String, val votes: Int, val percent: Double)
+data class ResultsRes(val election: ElectionDto, val turnout: TurnoutDto, val positions: List<String> = emptyList(), val results: List<ResultRowDto>)
 
 // Administrator-only data
 data class VoteAuditDto(
     val studentNumber: String, val fullName: String, val program: String,
-    val candidateId: Int, val candidateName: String, val transactionId: String, val castAt: String
+    val candidateId: Int, val candidateName: String, val transactionId: String, val castAt: String,
+    val position: String = ""
 )
 data class VoterDto(val studentNumber: String, val fullName: String, val program: String, val hasVoted: Boolean, val votedAt: String?,
-                    val respondentCode: String? = null)
+                    val respondentCode: String? = null, val positionsVoted: Int = 0, val positionsTotal: Int = 0)
 data class TurnoutRowDto(val program: String, val eligible: Int, val voted: Int, val percent: Double)
 data class DeletedRes(val deleted: Int)
 data class ResetRes(val votesRemoved: Int, val status: String)
@@ -229,6 +239,11 @@ interface VoteraApi {
     @POST("admin/demo/fill") suspend fun demoFill(@Body b: DemoReq): DemoRes
     @GET("announcements") suspend fun announcements(): List<AnnouncementDto>
     @POST("announcements") suspend fun postAnnouncement(@Body b: AnnouncementReq): AnnouncementDto
+    @PUT("admin/announcements/{id}") suspend fun editAnnouncement(@Path("id") id: Int, @Body b: AnnouncementEditReq): AnnouncementDto
+    @DELETE("admin/announcements/{id}") suspend fun deleteAnnouncement(@Path("id") id: Int): DeletedRes
+    @GET("announcements/{id}/image") suspend fun announcementImage(@Path("id") id: Int): ResponseBody
+    @PUT("admin/announcements/{id}/image") suspend fun uploadAnnouncementImage(@Path("id") id: Int, @Body body: RequestBody): AnnouncementDto
+    @DELETE("admin/announcements/{id}/image") suspend fun deleteAnnouncementImage(@Path("id") id: Int): AnnouncementDto
     @GET("vote/status") suspend fun voteStatus(): VoteStatusRes
     @POST("vote") suspend fun vote(@Body b: VoteReq): VoteRes
     @GET("results") suspend fun results(): ResultsRes
