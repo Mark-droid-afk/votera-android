@@ -75,7 +75,7 @@ fun AdminReport(vm: AppVM) {
             Card {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(res.election.title, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(ellipsize(res.election.title, 40), maxLines = 1, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         StatusPill(res.election.status)
                     }
                     Text("${res.turnout.votesCast} of ${res.turnout.eligibleVoters} eligible voters voted (${fmt(res.turnout.turnoutPercent)}%)")
@@ -106,7 +106,7 @@ fun AdminReport(vm: AppVM) {
                 Row3("Program", "Voted", "Rate", bold = true, wa = 3f)
                 HorizontalDivider()
                 if (vm.turnoutRows.isEmpty()) Text("No data yet.", fontSize = 13.sp)
-                vm.turnoutRows.forEach { Row3(it.program, "${it.voted}/${it.eligible}", "${fmt(it.percent)}%") }
+                vm.turnoutRows.forEach { Row3(ellipsize(it.program, 22), "${it.voted}/${it.eligible}", "${fmt(it.percent)}%") }
             }
         }
         Card {
