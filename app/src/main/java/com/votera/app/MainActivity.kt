@@ -654,7 +654,7 @@ fun AppShell(vm: AppVM) {
                 title = {
                     if (showSettings) Text("Settings", fontSize = 18.sp)
                     else Column {
-                        Text(vm.election?.title ?: "VotEra", maxLines = 1, fontSize = 16.sp)
+                        Text("VotEra: Every vote counts", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, fontSize = 16.sp)
                         LiveBadge(vm.liveState)
                     }
                 },
@@ -772,8 +772,8 @@ fun AppShell(vm: AppVM) {
                     CandidateAvatar(c, 56.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(c.fullName, fontWeight = FontWeight.Bold)
-                        Text("${c.position} | ${c.program}", fontSize = 13.sp)
+                        Text(ellipsize(c.fullName, 28), fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text("${ellipsize(c.position, 20)} | ${ellipsize(c.program, 20)}", fontSize = 13.sp, maxLines = 1)
                     }
                     CredRing(c.credibilityScore, 46.dp, 4.dp)
                 }
@@ -920,7 +920,7 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                             StatusPill(e?.status ?: "closed")
                         }
                         ElectionTimeline(e?.status ?: "closed", MaterialTheme.colorScheme.onPrimaryContainer)
-                        vm.user?.let { Text("Signed in as ${it.fullName} (${it.studentNumber})", fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer) }
+                        vm.user?.let { Text("Signed in as ${ellipsize(it.fullName, 28)} (${it.studentNumber})", fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer) }
                         if (e?.status == "open") countdownText(vm.deadline)?.let {
                             Text(it, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
@@ -967,9 +967,10 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                         CandidateAvatar(c, 56.dp)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(c.fullName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(ellipsize(c.fullName, 28), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(c.position, fontSize = 13.sp)
+                                Text(ellipsize(c.position, 14), fontSize = 13.sp, maxLines = 1)
                                 ProgramChip(c.program)
                             }
                             if (c.manifesto.isNotBlank()) Text(c.manifesto, fontSize = 12.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -1002,8 +1003,8 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
             CandidateAvatar(c, 80.dp)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(c.fullName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("${c.position} | ${c.program}")
+                Text(ellipsize(c.fullName, 40), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2)
+                Text("${ellipsize(c.position, 24)} | ${ellipsize(c.program, 24)}", maxLines = 2)
             }
             CredRing(c.credibilityScore, 64.dp, 6.dp)
         }
@@ -1045,7 +1046,7 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
             }
         }
         if (isStudent) Button(onClick = onVote, enabled = open && !voted, modifier = Modifier.fillMaxWidth()) {
-            Text(when { voted -> "You have already voted"; !open -> "Voting is not open"; else -> "Vote for ${c.fullName}" })
+            Text(when { voted -> "You have already voted"; !open -> "Voting is not open"; else -> "Vote for ${ellipsize(c.fullName, 24)}" }, maxLines = 1)
         }
     }
 }
@@ -1108,7 +1109,7 @@ private fun SideBySide(vm: AppVM) {
             items(vm.candidates) { c ->
                 FilterChip(selected = c.id in picked,
                     onClick = { vm.comparePicked = if (c.id in picked) picked - c.id else picked + c.id },
-                    label = { Text(c.fullName) })
+                    label = { Text(ellipsize(c.fullName, 18), maxLines = 1) })
             }
         }
         val chosen = vm.candidates.filter { it.id in picked }
@@ -1122,8 +1123,8 @@ private fun SideBySide(vm: AppVM) {
                                 CandidateAvatar(c, 44.dp)
                                 Spacer(Modifier.width(8.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(c.fullName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                    Text(c.program, fontSize = 13.sp)
+                                    Text(ellipsize(c.fullName, 18), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1)
+                                    Text(ellipsize(c.program, 18), fontSize = 13.sp, maxLines = 1)
                                 }
                                 CredRing(c.credibilityScore, 46.dp, 4.dp)
                             }
@@ -1152,7 +1153,7 @@ fun UpdatesTab(vm: AppVM) {
             items(vm.announcements, key = { it.id }) { a ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
-                        Text(a.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(ellipsize(a.title, 60), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2)
                         Text(a.createdAt.take(10), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(4.dp))
                         Text(a.body)
@@ -1205,7 +1206,7 @@ fun ResultRow(r: ResultRowDto, candidate: CandidateDto?, showBar: Boolean) {
             if (!showBar) { Box(Modifier.size(10.dp).clip(CircleShape).background(color)); Spacer(Modifier.width(8.dp)) }
             if (candidate != null) CandidateAvatar(candidate, 32.dp) else if (showBar) Box(Modifier.size(10.dp).clip(CircleShape).background(color))
             Spacer(Modifier.width(8.dp))
-            Text("${r.rank}. ${r.fullName}", Modifier.weight(1f), fontWeight = if (leader) FontWeight.Bold else FontWeight.Normal)
+            Text("${r.rank}. ${ellipsize(r.fullName, 22)}", Modifier.weight(1f), maxLines = 1, fontWeight = if (leader) FontWeight.Bold else FontWeight.Normal)
             if (leader) {
                 Text("Leading", fontSize = 11.sp, color = Color.Black, modifier = Modifier.clip(RoundedCornerShape(50)).background(GOLD)
                     .padding(horizontal = 8.dp, vertical = 2.dp))
