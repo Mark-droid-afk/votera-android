@@ -434,7 +434,7 @@ fun WelcomeScreen(onDone: () -> Unit) {
             WelcomePage(VIcons.People, "Know your candidates", "Read every platform before you decide.",
                 listOf("Open a candidate to see the platform, achievements and credibility score", "Compare candidates side by side", "Try Match me to see who fits what you care about")),
             WelcomePage(VIcons.Check, "Vote once, keep a receipt", "Voting takes three short steps.",
-                listOf("Choose a candidate", "Review and confirm. A vote cannot be changed", "Keep your transaction ID as proof")),
+                listOf("Choose a candidate", "Select, then review and submit. A vote cannot be changed", "Keep your transaction ID as proof")),
             WelcomePage(VIcons.Bars, "Live results, your privacy", "Results update as votes come in.",
                 listOf("Other students see totals only", "Candidates and data are fictional", "Handled under the Data Privacy Act of 2012 (R.A. 10173)"))
         )
@@ -822,4 +822,167 @@ fun SuccessDialog(title: String, text: String, onDismiss: () -> Unit) {
         title = { Text(title, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
         text = { Text(text, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
         confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } })
+}
+
+// ---------------- Verify a receipt, feedback, idle warning ----------------
+/** Checks that a Transaction ID is recorded. The voter who owns it also sees which candidate it was for; everyone else only sees that it exists. */
+@Composable
+fun VerifyReceiptDialog(vm: AppVM, onDismiss: () -> Unit) {
+    var tx by remember { mutableStateOf("") }
+    var res by remember { mutableStateOf<VerifyRes?>(null) }
+    val clip = androidx.compose.ui.platform.LocalClipboardManager.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Verify a receipt") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Paste a Transaction ID to check that the vote is recorded. Only the voter who owns it can see who it was for.", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(tx, { tx = it.trim().take(64); res = null }, label = { Text("Transaction ID") }, supportingText = { Text("${tx.length}/64") },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 12.sp), modifier = Modifier.fillMaxWidth())
+                TextButton(onClick = { clip.getText()?.text?.let { tx = it.trim().take(64); res = null } }) { Text("Paste from clipboard") }
+                res?.let { r ->
+                    Card(colors = CardDefaults.cardColors(containerColor = if (r.valid) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(if (r.valid) "Recorded" else "Not found", fontWeight = FontWeight.Bold)
+                            Text(r.message, fontSize = 13.sp)
+                            if (r.valid) {
+                                if (!r.position.isNullOrBlank()) Text("Position: ${ellipsize(r.position, 40)}", fontSize = 13.sp)
+                                r.castAt?.let { Text("Time: ${it.replace("T", " ").take(16)} UTC", fontSize = 13.sp) }
+                                if (r.yours && !r.candidateName.isNullOrBlank()) Text("Your vote: ${ellipsize(r.candidateName, 30)}", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                else Text("This receipt belongs to another voter, so the choice is hidden.", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { vm.verifyReceipt(tx) { res = it } }, enabled = tx.length == 64 && !vm.busy) { Text("Verify") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } })
+}
+
+@Composable
+private fun RatingRow(label: String, hint: String, value: Int, onChange: (Int) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Text(hint, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            (1..5).forEach { n ->
+                Box(Modifier.size(44.dp).clip(CircleShape)
+                    .background(if (n <= value) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { onChange(n) }.semantics { contentDescription = "$label rating $n of 5" },
+                    contentAlignment = Alignment.Center) {
+                    Text("$n", fontWeight = FontWeight.Bold, color = if (n <= value) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+/** Four 1 to 5 ratings and an optional comment. Sending again replaces the earlier answer. */
+@Composable
+fun FeedbackDialog(vm: AppVM, onDismiss: () -> Unit) {
+    var ease by remember { mutableStateOf(0) }
+    var clarity by remember { mutableStateOf(0) }
+    var trust by remember { mutableStateOf(0) }
+    var overall by remember { mutableStateOf(0) }
+    var comment by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        try { val m = Net.api.myFeedback(); if (m.submitted) { ease = m.ease; clarity = m.clarity; trust = m.trust; overall = m.overall; comment = m.comment } }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (t: Throwable) { }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rate VotEra") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("1 is the lowest and 5 is the highest. Your answers are shown to the administrator without your name.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                RatingRow("Ease of use", "I could find and do everything I needed.", ease) { ease = it }
+                RatingRow("Clarity", "The screens and words were easy to understand.", clarity) { clarity = it }
+                RatingRow("Trust", "I trust that my vote was recorded and counted correctly.", trust) { trust = it }
+                RatingRow("Overall", "How satisfied are you with the app?", overall) { overall = it }
+                OutlinedTextField(comment, { comment = it.take(300) }, label = { Text("Comment (optional)") }, supportingText = { Text("${comment.length}/300") },
+                    minLines = 2, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { vm.sendFeedback(FeedbackReq(ease, clarity, trust, overall, comment.trim())) },
+                enabled = ease > 0 && clarity > 0 && trust > 0 && overall > 0 && !vm.busy) { Text("Send") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+const val IDLE_WARN_MS = 14 * 60 * 1000L
+const val IDLE_OUT_MS = 15 * 60 * 1000L
+
+/** Warns before an idle session is logged out, with a countdown and a button to stay signed in. */
+@Composable
+fun IdleWarningDialog(secondsLeft: Int, onStay: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onStay,
+        title = { Text("Still there?") },
+        text = { Text("For your security you will be logged out in $secondsLeft seconds because the app has not been used for a while.") },
+        confirmButton = { TextButton(onClick = onStay) { Text("Stay signed in") } })
+}
+
+// ---------------- Admin insights: checklist, warnings, turnout, feedback ----------------
+@Composable
+private fun CheckLine(done: Boolean, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(20.dp).clip(CircleShape).background(if (done) GREEN else MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            if (done) Icon(VIcons.Check, contentDescription = "Done", tint = Color.White, modifier = Modifier.size(14.dp))
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(text, fontSize = 13.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
+}
+
+/** Setup checklist (ticks itself), warnings (ties, one-candidate positions, flagged manifestos) and student feedback. */
+@Composable
+fun AdminInsights(vm: AppVM) {
+    LaunchedEffect(Unit) { try { vm.feedbackSummary = Net.api.feedbackSummary() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (t: Throwable) { } }
+    val cands = vm.candidates
+    val groups = groupByPosition(cands)
+    val res = vm.results
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Election checklist", style = MaterialTheme.typography.titleMedium)
+                CheckLine(cands.isNotEmpty(), "Candidates added (${cands.size})")
+                CheckLine(groups.isNotEmpty() && groups.all { it.second.size >= 2 }, "Every position has at least 2 candidates")
+                CheckLine(cands.isNotEmpty() && cands.all { it.achievementsScore != null && it.leadershipScore != null && it.communityScore != null }, "Scores entered for every candidate")
+                CheckLine(vm.voters.isNotEmpty(), "Voters loaded (${vm.voters.size})")
+                CheckLine(vm.deadline != null || vm.election?.status == "closed", "Closing time set or election closed")
+                CheckLine(vm.election?.status == "open" || vm.election?.status == "closed", "Election opened")
+            }
+        }
+        val ties = if (res == null) emptyList() else resultGroups(res.results).filter { (_, rows) ->
+            val top = rows.maxOfOrNull { it.votes } ?: 0
+            top > 0 && rows.count { it.votes == top } > 1
+        }.map { it.first }
+        val single = groups.filter { it.second.size == 1 }.map { it.first }
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Warnings", style = MaterialTheme.typography.titleMedium)
+                if (ties.isEmpty() && single.isEmpty() && vm.flagged.isEmpty()) Text("Nothing needs attention.", fontSize = 13.sp)
+                ties.forEach { Text("Tie for first place: ${ellipsize(it, 36)}", fontSize = 13.sp, color = MaterialTheme.colorScheme.error) }
+                single.forEach { Text("Only one candidate: ${ellipsize(it, 36)}", fontSize = 13.sp) }
+                if (vm.flagged.isNotEmpty()) Text("${vm.flagged.size} manifesto${if (vm.flagged.size == 1) "" else "s"} flagged for review (similarity 70% or higher).", fontSize = 13.sp)
+            }
+        }
+        val fb = vm.feedbackSummary
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Student feedback", style = MaterialTheme.typography.titleMedium)
+                if (fb == null || fb.count == 0) Text("No feedback yet. Students send it from Settings.", fontSize = 13.sp)
+                else {
+                    Text("${fb.count} response${if (fb.count == 1) "" else "s"}, average out of 5", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    listOf("Ease of use" to fb.ease, "Clarity" to fb.clarity, "Trust" to fb.trust, "Overall" to fb.overall).forEach { (l, v) ->
+                        Row { Text(l, fontSize = 13.sp, modifier = Modifier.weight(1f)); Text(fmt(v), fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                    }
+                    fb.comments.take(5).forEach { Text("\"${ellipsize(it.comment, 80)}\" (${ellipsize(it.program, 16)})", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+            }
+        }
+    }
 }
