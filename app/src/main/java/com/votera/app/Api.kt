@@ -245,6 +245,7 @@ interface VoteraApi {
     @GET("admin/export/votes.csv") suspend fun exportVotesCsv(): ResponseBody
     @POST("admin/election/reset") suspend fun resetElection(): ResetRes
     @POST("admin/demo/fill") suspend fun demoFill(@Body b: DemoReq): DemoRes
+    @POST("admin/demo/candidates") suspend fun demoCandidates(): DemoRes
     @GET("announcements") suspend fun announcements(): List<AnnouncementDto>
     @POST("announcements") suspend fun postAnnouncement(@Body b: AnnouncementReq): AnnouncementDto
     @PUT("admin/announcements/{id}") suspend fun editAnnouncement(@Path("id") id: Int, @Body b: AnnouncementEditReq): AnnouncementDto
