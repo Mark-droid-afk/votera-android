@@ -123,7 +123,9 @@ class AppVM : ViewModel() {
     fun touch() { lastTouch = SystemClock.elapsedRealtime() }
     var liveState by mutableStateOf("off")  // live, reconnecting or off (off = refreshing every 15 seconds)
     var showReceipt by mutableStateOf(false)
-    var showTutorial by mutableStateOf(false)
+    var showTutorial by mutableStateOf(false)   // set to true to start the guided tour (first login, Help button)
+    val tour = TourState()
+    fun finishTour() { tour.step = -1; user?.let { Prefs.markTutorial(it.studentNumber) } }
     var comparePicked by mutableStateOf(listOf<Int>())  // kept here so the Compare tab remembers its choice when you switch tabs
     var adminSub by mutableStateOf("overview")
     var candidateQuery by mutableStateOf("")
@@ -360,7 +362,7 @@ class AppVM : ViewModel() {
 
     fun logout() {
         stopLive()
-        picks.clear(); showReview = false; positionTab = ""; showFeedback = false; showVerify = false; feedbackSummary = null
+        tour.step = -1; picks.clear(); showReview = false; positionTab = ""; showFeedback = false; showVerify = false; feedbackSummary = null
         Session.token = null
         user = null; election = null; candidates = emptyList(); announcements = emptyList()
         results = null; voteStatus = null; flagged = emptyList(); otpToken = ""; devOtp = ""
@@ -668,11 +670,12 @@ fun VoteraApp(vm: AppVM = viewModel()) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 var splash by remember { mutableStateOf(true) }
                 LaunchedEffect(Unit) { vm.prewarm(); delay(700); splash = false }
-                if (splash) SplashScreen() else Box(Modifier.fillMaxSize()) {
+                if (splash) SplashScreen() else CompositionLocalProvider(LocalTour provides vm.tour) { Box(Modifier.fillMaxSize()) {
                     AppShell(vm)
                     if (vm.showHelp) HelpCenter(onBack = { vm.showHelp = false }, onTour = { vm.showHelp = false; vm.showWelcome = true })
                     if (vm.showWelcome) WelcomeScreen(onDone = { Prefs.markWelcomeSeen(); vm.showWelcome = false })
-                }
+                    if (vm.tour.active && vm.stage == "main") TourOverlay(vm.tour, remember(vm.user?.role) { tourSteps(vm.user?.role == "admin") }) { vm.finishTour() }
+                } }
             }
         }
     }
@@ -734,15 +737,27 @@ fun AppShell(vm: AppVM) {
     BackHandler(enabled = vm.stage == "main" && !showSettings && detailId != null) { detailId = null }
     BackHandler(enabled = vm.stage == "otp") { vm.backToLogin() }
 
+    // Guided tour: start it when asked, and show the tab each step talks about.
+    val tourList = remember(isAdmin) { tourSteps(isAdmin) }
+    LaunchedEffect(vm.showTutorial, vm.stage) {
+        if (vm.showTutorial && vm.stage == "main" && !vm.showWelcome) { delay(600); vm.showTutorial = false; vm.tour.step = 0 }
+    }
+    LaunchedEffect(vm.tour.step) {
+        val st = tourList.getOrNull(vm.tour.step) ?: return@LaunchedEffect
+        st.tab?.let { tab = it; detailId = null; showSettings = false; vm.showReceipt = false }
+        st.adminSub?.let { vm.adminSub = it }
+        if (st.tab == "candidates") { try { vm.candidatesListState.scrollToItem(0) } catch (e: CancellationException) { throw e } catch (t: Throwable) { } }
+    }
+
     Scaffold(
         modifier = Modifier.pointerInput(Unit) { awaitPointerEventScope { while (true) { awaitPointerEvent(PointerEventPass.Initial); vm.touch() } } },
         snackbarHost = { SnackbarHost(snack) },
         topBar = {
-            AnimatedVisibility(visible = vm.stage == "main" && !vm.showTutorial,
+            AnimatedVisibility(visible = vm.stage == "main",
                 enter = fadeIn(tween(250)) + expandVertically(tween(250)), exit = fadeOut(tween(150)) + shrinkVertically(tween(200))) { TopAppBar(
                 title = {
                     if (showSettings) Text("Settings", fontSize = 18.sp)
-                    else Column {
+                    else Column(Modifier.tourTarget("title")) {
                         Text("VotEra: Every vote counts", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, fontSize = 16.sp)
                         LiveBadge(vm.liveState)
                     }
@@ -755,18 +770,19 @@ fun AppShell(vm: AppVM) {
                     navigationIconContentColor = Color.White, actionIconContentColor = Color.White),
                 actions = {
                     if (!showSettings) {
-                        IconButton(onClick = { vm.showTutorial = true }) { Icon(VIcons.Help, contentDescription = "How to use VotEra") }
-                        IconButton(onClick = { showSettings = true }) { Icon(VIcons.Tune, contentDescription = "Settings") }
-                        IconButton(onClick = { vm.confirmLogout = true }) { Icon(VIcons.Logout, contentDescription = "Log out") }
+                        IconButton(onClick = { vm.showTutorial = true }, modifier = Modifier.tourTarget("help")) { Icon(VIcons.Help, contentDescription = "Play the guided tour") }
+                        IconButton(onClick = { showSettings = true }, modifier = Modifier.tourTarget("settings")) { Icon(VIcons.Tune, contentDescription = "Settings") }
+                        IconButton(onClick = { vm.confirmLogout = true }, modifier = Modifier.tourTarget("logout")) { Icon(VIcons.Logout, contentDescription = "Log out") }
                     }
                 }
             ) }
         },
         bottomBar = {
-            AnimatedVisibility(visible = vm.stage == "main" && !vm.showTutorial,
+            AnimatedVisibility(visible = vm.stage == "main",
                 enter = fadeIn(tween(250)) + expandVertically(tween(250)), exit = fadeOut(tween(150)) + shrinkVertically(tween(200))) { NavigationBar {
                 tabs.forEach { t ->
                     NavigationBarItem(
+                        modifier = Modifier.tourTarget("nav_${t.id}"),
                         selected = tab == t.id && !showSettings,
                         onClick = { if (tab != t.id) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); tab = t.id; detailId = null; showSettings = false; vm.showReceipt = false },
                         icon = {
@@ -791,7 +807,6 @@ fun AppShell(vm: AppVM) {
         val screen = when {
             vm.stage == "login" -> "login"
             vm.stage == "otp" -> "otp"
-            vm.showTutorial -> "tutorial"
             showSettings -> "settings"
             vm.showReceipt && vm.voteStatus?.hasVoted == true -> "receipt"
             detailId != null && vm.candidates.any { it.id == detailId } -> "detail:$detailId"
@@ -826,7 +841,6 @@ fun AppShell(vm: AppVM) {
                     when {
                         s == "login" -> LoginScreen(vm)
                         s == "otp" -> OtpScreen(vm)
-                        s == "tutorial" -> TutorialScreen(isAdmin) { vm.user?.let { Prefs.markTutorial(it.studentNumber) }; vm.showTutorial = false }
                         s == "settings" -> SettingsScreen(vm)
                         s == "receipt" -> ReceiptScreen(vm, onResults = { vm.showReceipt = false; tab = "results"; detailId = null }, onDone = { vm.showReceipt = false })
                         s.startsWith("detail:") -> {
@@ -845,11 +859,11 @@ fun AppShell(vm: AppVM) {
                 }
             }
             Column(Modifier.align(Alignment.TopCenter)) {
-                AnimatedVisibility(visible = vm.stage == "main" && vm.offline && !vm.showTutorial) {
+                AnimatedVisibility(visible = vm.stage == "main" && vm.offline) {
                     InfoBanner("No connection", "Showing the last information loaded. It updates again when the connection returns.", null, {}, null, warn = true)
                 }
                 val b = vm.banner
-                AnimatedVisibility(visible = vm.stage == "main" && b != null && !vm.showTutorial) {
+                AnimatedVisibility(visible = vm.stage == "main" && b != null) {
                     if (b != null) InfoBanner("New announcement: ${b.title}", b.body, "View",
                         { tab = "updates"; detailId = null; showSettings = false; vm.showReceipt = false; vm.banner = null }, { vm.banner = null })
                 }
@@ -891,11 +905,13 @@ fun LoginScreen(vm: AppVM) {
         vm.login(sn, pw, if (admin) "admin" else "student")
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 12.dp), verticalArrangement = Arrangement.Center) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { vm.showHelp = true }) { Icon(VIcons.Help, contentDescription = "Help, FAQ and privacy") }
-            ThemeToggleButton()
-        }
+    Column(Modifier.fillMaxSize()) {
+    // Help and theme buttons stay pinned at the top; only the form below scrolls.
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = { vm.showHelp = true }) { Icon(VIcons.Help, contentDescription = "Help, FAQ and privacy") }
+        ThemeToggleButton()
+    }
+    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 12.dp), verticalArrangement = Arrangement.Center) {
         // Tapping the logo five times opens the connection settings (kept out of sight for students).
         Logo(170.dp, Modifier.align(Alignment.CenterHorizontally).clickable { taps++; if (taps >= 5) { showServer = true; taps = 0 } })
         Spacer(Modifier.height(8.dp))
@@ -953,6 +969,7 @@ fun LoginScreen(vm: AppVM) {
             "Participation is voluntary and responses are kept confidential (R.A. 10173).", fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+    }
 }
 
 @Composable
@@ -996,7 +1013,7 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
             item {
                 val e = vm.election
                 val vs = vm.voteStatus
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                Card(Modifier.tourTarget("status"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Election status", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -1053,7 +1070,7 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                 val sel = groups.indexOfFirst { posKey(it.first) == vm.positionTab }.let { if (it < 0) 0 else it }
                 val isStudent = vm.user?.role == "student"
                 item(key = "pos-tabs") {
-                    ScrollableTabRow(selectedTabIndex = sel, edgePadding = 0.dp, containerColor = androidx.compose.ui.graphics.Color.Transparent) {
+                    ScrollableTabRow(selectedTabIndex = sel, modifier = Modifier.tourTarget("positions"), edgePadding = 0.dp, containerColor = androidx.compose.ui.graphics.Color.Transparent) {
                         groups.forEachIndexed { i, (pos, list) ->
                             val m = vm.voteStatus?.positions?.firstOrNull { posKey(it.position) == posKey(pos) }
                             Tab(selected = i == sel, onClick = { vm.positionTab = posKey(pos) },
@@ -1071,7 +1088,11 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                 val (pos, list) = groups[sel]
                 val mine = vm.voteStatus?.positions?.firstOrNull { posKey(it.position) == posKey(pos) }
                 item(key = "pos:$pos") { PositionHeader(pos, list.size, mine, isStudent, vm.picks[posKey(pos)] != null) }
-                items(list, key = { it.id }) { c -> CandidateCard(c, mine?.candidateId == c.id, { onOpen(c.id) }, vm.picks[posKey(pos)] == c.id) }
+                items(list, key = { it.id }) { c ->
+                    Box(if (c.id == list.first().id) Modifier.tourTarget("candidate") else Modifier) {
+                        CandidateCard(c, mine?.candidateId == c.id, { onOpen(c.id) }, vm.picks[posKey(pos)] == c.id)
+                    }
+                }
                 if (groups.size > 1) item(key = "pos-next") {
                     val nextIdx = (sel + 1) % groups.size
                     OutlinedButton(onClick = { vm.positionTab = posKey(groups[nextIdx].first) }, modifier = Modifier.fillMaxWidth()) {
@@ -1461,7 +1482,7 @@ private fun BallotBar(vm: AppVM) {
     val left = positions.filter { !it.voted }
     val selected = left.count { vm.picks[posKey(it.position)] != null }
     val next = left.firstOrNull { vm.picks[posKey(it.position)] == null }
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+    Card(Modifier.tourTarget("ballot"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Your ballot", fontWeight = FontWeight.Bold, maxLines = 1)
