@@ -925,7 +925,7 @@ fun LoginScreen(vm: AppVM) {
         OutlinedTextField(
             sn, { sn = if (admin) it else it.uppercase().filter { ch -> ch.isLetterOrDigit() || ch == '-' } },
             label = { Text(if (admin) "Administrator ID" else "Student number") },
-            placeholder = { Text(if (admin) "ADMIN-000" else "2020-00000-CM-0") },
+            placeholder = { if (!admin) Text("2020-00000-CM-0") },
             supportingText = {
                 if (!admin) Text(if (sn.isNotEmpty() && !snValid) "Use the format YYYY-NNNNN-CM-N" else "Format: YYYY-NNNNN-CM-N, for example 2020-00000-CM-0")
             },
