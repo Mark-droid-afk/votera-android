@@ -48,6 +48,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -108,6 +110,15 @@ class AppVM : ViewModel() {
     /** Title and text of the "done" dialog shown after something important succeeds. */
     var success by mutableStateOf<Pair<String, String>?>(null)
     var confirmLogout by mutableStateOf(false)
+    /** Choices made on the ballot but not sent yet: position key -> candidate id. They are sent together from the review screen. */
+    val picks = mutableStateMapOf<String, Int>()
+    var showReview by mutableStateOf(false)
+    var showFeedback by mutableStateOf(false)
+    var showVerify by mutableStateOf(false)
+    var feedbackSummary by mutableStateOf<FeedbackSummary?>(null)
+    /** Last time the person touched the screen (SystemClock.elapsedRealtime). Used for the idle warning. */
+    var lastTouch = SystemClock.elapsedRealtime()  // plain field on purpose: touching the screen must not recompose anything
+    fun touch() { lastTouch = SystemClock.elapsedRealtime() }
     var liveState by mutableStateOf("off")  // live, reconnecting or off (off = refreshing every 15 seconds)
     var showReceipt by mutableStateOf(false)
     var showTutorial by mutableStateOf(false)
@@ -321,8 +332,33 @@ class AppVM : ViewModel() {
         }
     }
 
+    fun pick(c: CandidateDto) { picks[posKey(c.position)] = c.id }
+    fun unpick(position: String) { picks.remove(posKey(position)) }
+
+    /** Sends every selected choice, one vote per position. A position that was already voted is skipped; any other failure keeps the rest selected. */
+    fun submitBallot() = launchTask {
+        var sent = 0
+        var failure: Throwable? = null
+        for ((key, id) in picks.toList()) {
+            try { Net.api.vote(VoteReq(id)); sent++; picks.remove(key) }
+            catch (e: CancellationException) { throw e }
+            catch (e: HttpException) { if (e.code() == 409) picks.remove(key) else { failure = e; break } }
+            catch (t: Throwable) { failure = t; break }
+        }
+        voteStatus = Net.api.voteStatus()
+        results = Net.api.results()
+        if (failure != null) throw failure
+        showReview = false
+        if (voteStatus?.complete == true) showReceipt = true
+        else {
+            val left = voteStatus?.positions?.count { !it.voted } ?: 0
+            success = "Ballot submitted" to "$sent vote${if (sent == 1) "" else "s"} recorded. $left position${if (left == 1) "" else "s"} left, you can vote for them any time while the election is open."
+        }
+    }
+
     fun logout() {
         stopLive()
+        picks.clear(); showReview = false; showFeedback = false; showVerify = false; feedbackSummary = null
         Session.token = null
         user = null; election = null; candidates = emptyList(); announcements = emptyList()
         results = null; voteStatus = null; flagged = emptyList(); otpToken = ""; devOtp = ""
@@ -420,6 +456,19 @@ class AppVM : ViewModel() {
         success = "Demo votes added" to "${r.added} sample votes were added. Reset the election when you are done."
     }
     /** Downloads the vote list as CSV text; the screen then hands it to the Android share sheet. */
+    /** Student: checks that a Transaction ID is recorded. */
+    fun verifyReceipt(tx: String, onResult: (VerifyRes) -> Unit) = launchTask { onResult(Net.api.verifyReceipt(tx.trim())) }
+    fun sendFeedback(r: FeedbackReq) = launchTask {
+        Net.api.sendFeedback(r)
+        showFeedback = false
+        success = "Thank you" to "Your feedback was sent. You can change it later in Settings."
+    }
+    fun loadFeedback() = launchTask { feedbackSummary = Net.api.feedbackSummary() }
+    /** Admin: one JSON file with everything recorded, for the paper's evidence. */
+    fun exportBackup(onText: (String) -> Unit) = launchTask {
+        val body = Net.api.backup()
+        onText(withContext(Dispatchers.IO) { body.string() })
+    }
     fun exportVotes(onText: (String) -> Unit) = launchTask {
         val body = Net.api.exportVotesCsv()
         val text = withContext(Dispatchers.IO) { body.string() }
@@ -644,8 +693,18 @@ fun AppShell(vm: AppVM) {
     val snack = remember { SnackbarHostState() }
     var tab by remember { mutableStateOf("candidates") }
     var detailId by remember { mutableStateOf<Int?>(null) }
-    var confirm by remember { mutableStateOf<CandidateDto?>(null) }
     var showSettings by remember { mutableStateOf(false) }
+    var idleLeft by remember { mutableStateOf<Int?>(null) }
+    // Idle session: warn one minute before logging out, so a phone left unlocked does not stay signed in.
+    LaunchedEffect(vm.stage) {
+        while (vm.stage == "main") {
+            delay(1000)
+            val idle = SystemClock.elapsedRealtime() - vm.lastTouch
+            if (idle >= IDLE_OUT_MS) { idleLeft = null; tab = "candidates"; detailId = null; showSettings = false; vm.logout(); vm.message = "You were logged out because the app was idle." }
+            else idleLeft = if (idle >= IDLE_WARN_MS) ((IDLE_OUT_MS - idle) / 1000).toInt() + 1 else null
+        }
+        idleLeft = null
+    }
     val haptic = LocalHapticFeedback.current
     val isAdmin = vm.user?.role == "admin"
     val tabs = buildList {
@@ -667,6 +726,7 @@ fun AppShell(vm: AppVM) {
     BackHandler(enabled = vm.stage == "otp") { vm.backToLogin() }
 
     Scaffold(
+        modifier = Modifier.pointerInput(Unit) { awaitPointerEventScope { while (true) { awaitPointerEvent(PointerEventPass.Initial); vm.touch() } } },
         snackbarHost = { SnackbarHost(snack) },
         topBar = {
             AnimatedVisibility(visible = vm.stage == "main" && !vm.showTutorial,
@@ -700,7 +760,11 @@ fun AppShell(vm: AppVM) {
                     NavigationBarItem(
                         selected = tab == t.id && !showSettings,
                         onClick = { if (tab != t.id) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); tab = t.id; detailId = null; showSettings = false; vm.showReceipt = false },
-                        icon = { Icon(t.icon, contentDescription = t.label) },
+                        icon = {
+                            val left = if (t.id == "candidates" && vm.user?.role == "student" && vm.election?.status == "open") vm.voteStatus?.positions?.count { !it.voted } ?: 0 else 0
+                            if (left > 0) BadgedBox(badge = { Badge { Text("$left") } }) { Icon(t.icon, contentDescription = "${t.label}, $left positions left to vote") }
+                            else Icon(t.icon, contentDescription = t.label)
+                        },
                         label = { Text(t.label, fontSize = 11.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = MaterialTheme.colorScheme.primary,
@@ -758,7 +822,7 @@ fun AppShell(vm: AppVM) {
                         s == "receipt" -> ReceiptScreen(vm, onResults = { vm.showReceipt = false; tab = "results"; detailId = null }, onDone = { vm.showReceipt = false })
                         s.startsWith("detail:") -> {
                             val detail = vm.candidates.firstOrNull { it.id == s.removePrefix("detail:").toIntOrNull() }
-                            if (detail != null) CandidateDetail(detail, vm, onBack = { detailId = null }, onVote = { confirm = detail })
+                            if (detail != null) CandidateDetail(detail, vm, onBack = { detailId = null }, onVote = { vm.pick(detail); detailId = null; vm.message = "Selected ${ellipsize(detail.fullName, 24)} for ${ellipsize(detail.position, 24)}. Review your ballot when you are ready." })
                         }
                         else -> when (s.removePrefix("tab:")) {
                             "candidates" -> CandidatesTab(vm) { detailId = it }
@@ -792,30 +856,11 @@ fun AppShell(vm: AppVM) {
         confirmButton = { TextButton(onClick = { vm.confirmLogout = false; tab = "candidates"; detailId = null; showSettings = false; vm.logout() }) { Text("Log out") } },
         dismissButton = { TextButton(onClick = { vm.confirmLogout = false }) { Text("Stay") } })
     vm.success?.let { (t, d) -> SuccessDialog(t, d) { vm.success = null } }
+    if (vm.showFeedback) FeedbackDialog(vm) { vm.showFeedback = false }
+    if (vm.showVerify) VerifyReceiptDialog(vm) { vm.showVerify = false }
+    idleLeft?.let { IdleWarningDialog(it) { vm.touch(); idleLeft = null } }
 
-    confirm?.let { c ->
-        ModalBottomSheet(onDismissRequest = { confirm = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-            Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                StepStrip(2)
-                Text("Confirm your vote for ${ellipsize(c.position, 30)}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CandidateAvatar(c, 56.dp)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(ellipsize(c.fullName, 28), fontWeight = FontWeight.Bold, maxLines = 1)
-                        Text("${ellipsize(c.position, 20)} | ${ellipsize(c.program, 20)}", fontSize = 13.sp, maxLines = 1)
-                    }
-                    CredRing(c.credibilityScore, 46.dp, 4.dp)
-                }
-                Text("You vote once for each position. A recorded vote cannot be changed.", fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = { confirm = null }, modifier = Modifier.weight(1f)) { Text("Cancel") }
-                    Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.vote(c); confirm = null; detailId = null }, modifier = Modifier.weight(1f)) { Text("Confirm vote") }
-                }
-            }
-        }
-    }
+    if (vm.showReview) ReviewBallotSheet(vm, onChange = { vm.showReview = false; tab = "candidates"; detailId = null; showSettings = false })
 }
 
 // ---------------- Login (Student or Administrator: password, then OTP) ----------------
@@ -961,11 +1006,12 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                                 color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.weight(1f))
                             TextButton(onClick = { vm.showReceipt = true }) { Text("View receipt", maxLines = 1) }
                         }
-                        else if (vm.user?.role == "student") Text("Open a candidate to read the profile and vote. You vote once for each position.", fontSize = 12.sp,
+                        else if (vm.user?.role == "student") Text("Open a candidate to read the profile and select. You vote once for each position.", fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                 }
             }
+            if (vm.user?.role == "student" && vm.election?.status == "open" && vm.voteStatus?.complete != true) item { BallotBar(vm) }
             if (vm.user?.role == "student") item { HowToVote(done = vm.voteStatus?.complete == true, open = vm.election?.status == "open") }
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -995,15 +1041,15 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
             }
             groupByPosition(shown).forEach { (pos, list) ->
                 val mine = vm.voteStatus?.positions?.firstOrNull { posKey(it.position) == posKey(pos) }
-                item(key = "pos:$pos") { PositionHeader(pos, list.size, mine, vm.user?.role == "student") }
-                items(list, key = { it.id }) { c -> CandidateCard(c, mine?.candidateId == c.id) { onOpen(c.id) } }
+                item(key = "pos:$pos") { PositionHeader(pos, list.size, mine, vm.user?.role == "student", vm.picks[posKey(pos)] != null) }
+                items(list, key = { it.id }) { c -> CandidateCard(c, mine?.candidateId == c.id, { onOpen(c.id) }, vm.picks[posKey(pos)] == c.id) }
             }
         }
     }
 }
 
 @Composable
-private fun PositionHeader(position: String, count: Int, mine: PositionVoteDto?, student: Boolean) {
+private fun PositionHeader(position: String, count: Int, mine: PositionVoteDto?, student: Boolean, picked: Boolean = false) {
     var open by remember { mutableStateOf(false) }
     val info = findPosition(position)
     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -1018,7 +1064,8 @@ private fun PositionHeader(position: String, count: Int, mine: PositionVoteDto?,
                     Icon(VIcons.Check, contentDescription = null, tint = GREEN, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Voted", fontSize = 12.sp, color = GREEN, fontWeight = FontWeight.Medium, maxLines = 1)
-                } else Text("Not voted yet", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else if (picked) Text("Selected", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                else Text("Not voted yet", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         if (open && info != null) Text(info.duty, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
@@ -1026,8 +1073,8 @@ private fun PositionHeader(position: String, count: Int, mine: PositionVoteDto?,
 }
 
 @Composable
-private fun CandidateCard(c: CandidateDto, votedForThis: Boolean, onOpen: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable { onOpen() }) {
+private fun CandidateCard(c: CandidateDto, votedForThis: Boolean, onOpen: () -> Unit, picked: Boolean = false) {
+    Card(Modifier.fillMaxWidth().clickable(onClickLabel = "Open profile of ${c.fullName}") { onOpen() }) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             CandidateAvatar(c, 56.dp)
             Spacer(Modifier.width(12.dp))
@@ -1038,6 +1085,7 @@ private fun CandidateCard(c: CandidateDto, votedForThis: Boolean, onOpen: () -> 
                 if (c.manifesto.isNotBlank()) Text(c.manifesto, fontSize = 12.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
                 if (votedForThis) Text("Your vote", fontSize = 12.sp, color = GREEN, fontWeight = FontWeight.Bold, maxLines = 1)
+                else if (picked) Text("Selected, not sent yet", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, maxLines = 1)
                 if (c.flagged) Text("Manifesto flagged for review", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.error)
             }
             Spacer(Modifier.width(8.dp))
@@ -1106,14 +1154,19 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (isStudent) Button(onClick = onVote, enabled = open && !voted, modifier = Modifier.fillMaxWidth()) {
+        val picked = vm.picks[posKey(c.position)] == c.id
+        if (isStudent) Button(onClick = { if (picked) vm.unpick(c.position) else onVote() }, enabled = open && !voted, modifier = Modifier.fillMaxWidth(),
+            colors = if (picked) ButtonDefaults.buttonColors(containerColor = GREEN) else ButtonDefaults.buttonColors()) {
             Text(when {
                 voted && mine?.candidateId == c.id -> "You voted for ${ellipsize(c.fullName, 20)}"
                 voted -> "You already voted for ${ellipsize(c.position, 22)}"
                 !open -> "Voting is not open"
-                else -> "Vote for ${ellipsize(c.fullName, 24)} as ${ellipsize(c.position, 20)}"
+                picked -> "Selected. Tap to undo"
+                else -> "Select ${ellipsize(c.fullName, 22)} for ${ellipsize(c.position, 20)}"
             }, maxLines = 1)
         }
+        if (isStudent && open && !voted) Text("Selecting does not send your vote. You review everything first.", fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -1159,6 +1212,8 @@ fun ReceiptScreen(vm: AppVM, onResults: () -> Unit, onDone: () -> Unit) {
             if (complete) OutlinedButton(onClick = { uri.openUri(link) }, modifier = Modifier.fillMaxWidth()) { Text("Open the post-pilot survey") }
         }
         OutlinedButton(onClick = { printHtml(ctx, "VotEra vote receipt", receiptHtml(vm)) }, modifier = Modifier.fillMaxWidth()) { Text("Print or save as PDF") }
+        OutlinedButton(onClick = { vm.showVerify = true }, modifier = Modifier.fillMaxWidth()) { Text("Verify a receipt") }
+        if (complete) OutlinedButton(onClick = { vm.showFeedback = true }, modifier = Modifier.fillMaxWidth()) { Text("Rate VotEra") }
         TextButton(onClick = onDone) { Text(if (complete) "Done" else "Back to the ballot") }
     }
 }
@@ -1344,7 +1399,7 @@ fun HowToVote(done: Boolean, open: Boolean) {
             Text("How to vote", style = MaterialTheme.typography.titleMedium)
             listOf(
                 Triple("1", "Read the candidates", "Tap a candidate to read the platform. Use the Compare tab to see two or more side by side."),
-                Triple("2", if (done) "You have voted" else if (open) "Cast your vote" else "Voting opens soon", if (done) "Your receipt is saved on this screen." else "Open a candidate and tap Vote, then confirm. You vote once for each position, such as President and Vice President."),
+                Triple("2", if (done) "You have voted" else if (open) "Cast your vote" else "Voting opens soon", if (done) "Your receipt is saved on this screen." else "Open a candidate and tap Select. When you have chosen, tap Review ballot and submit. You vote once for each position, such as President and Vice President."),
                 Triple("3", "Watch the results", "The Results tab updates live with totals. Individual votes are not shown.")
             ).forEachIndexed { i, (n, head, body) ->
                 Row(verticalAlignment = Alignment.Top) {
@@ -1357,6 +1412,66 @@ fun HowToVote(done: Boolean, open: Boolean) {
                         Text(head, fontWeight = FontWeight.Medium, fontSize = 14.sp)
                         Text(body, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                }
+            }
+        }
+    }
+}
+
+// ---------------- Ballot bar and review screen ----------------
+/** Shows how many positions are selected and which one is next, with a button to review before sending. */
+@Composable
+private fun BallotBar(vm: AppVM) {
+    val positions = vm.voteStatus?.positions ?: return
+    val left = positions.filter { !it.voted }
+    val selected = left.count { vm.picks[posKey(it.position)] != null }
+    val next = left.firstOrNull { vm.picks[posKey(it.position)] == null }
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Your ballot", fontWeight = FontWeight.Bold, maxLines = 1)
+                Text("$selected of ${left.size} open positions selected", fontSize = 12.sp, maxLines = 1)
+                if (next != null) Text("Next: ${ellipsize(next.position, 28)}", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
+            Button(onClick = { vm.showReview = true }, enabled = selected > 0) { Text("Review ballot", maxLines = 1) }
+        }
+    }
+}
+
+/** Last check before anything is sent. Voted positions are locked; selected ones can be changed; the rest can be skipped for now. */
+@Composable
+private fun ReviewBallotSheet(vm: AppVM, onChange: () -> Unit) {
+    val positions = (vm.voteStatus?.positions ?: emptyList()).sortedBy { positionRank(it.position) }
+    val count = positions.count { !it.voted && vm.picks[posKey(it.position)] != null }
+    ModalBottomSheet(onDismissRequest = { vm.showReview = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 32.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            StepStrip(2)
+            Text("Review your ballot", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1)
+            positions.forEach { p ->
+                val id = vm.picks[posKey(p.position)]
+                val cand = id?.let { i -> vm.candidates.firstOrNull { it.id == i } }
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(ellipsize(p.position, 30), fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(when {
+                            p.voted -> ellipsize(p.candidateName ?: "", 28)
+                            cand != null -> ellipsize(cand.fullName, 28)
+                            else -> "No selection yet"
+                        }, fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
+                    when {
+                        p.voted -> Text("Voted", fontSize = 12.sp, color = GREEN, fontWeight = FontWeight.Medium, maxLines = 1)
+                        cand != null -> TextButton(onClick = { vm.unpick(p.position) }) { Text("Remove", maxLines = 1) }
+                        else -> Text("Skipped", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            Text("A recorded vote cannot be changed. Positions you skip stay open until the election closes.", fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = onChange, modifier = Modifier.weight(1f)) { Text("Go back", maxLines = 1) }
+                Button(onClick = { vm.submitBallot() }, enabled = count > 0 && !vm.busy, modifier = Modifier.weight(1f)) {
+                    Text(if (count == 1) "Submit 1 vote" else "Submit $count votes", maxLines = 1)
                 }
             }
         }
