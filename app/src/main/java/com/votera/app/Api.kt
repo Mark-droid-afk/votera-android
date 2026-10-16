@@ -176,6 +176,14 @@ data class PositionVoteDto(val position: String, val voted: Boolean, val candida
 data class VoteStatusRes(val hasVoted: Boolean, val complete: Boolean = false, val transactionId: String? = null,
                          val positions: List<PositionVoteDto> = emptyList())
 data class VoteReq(val candidateId: Int)
+data class VerifyRes(val valid: Boolean, val message: String, val position: String? = null, val castAt: String? = null,
+                     val yours: Boolean = false, val candidateName: String? = null)
+data class FeedbackReq(val ease: Int, val clarity: Int, val trust: Int, val overall: Int, val comment: String)
+data class FeedbackMine(val submitted: Boolean, val ease: Int = 0, val clarity: Int = 0, val trust: Int = 0, val overall: Int = 0, val comment: String = "")
+data class FeedbackComment(val program: String = "", val overall: Int = 0, val comment: String = "")
+data class FeedbackSummary(val count: Int = 0, val ease: Double = 0.0, val clarity: Double = 0.0, val trust: Double = 0.0, val overall: Double = 0.0,
+                           val comments: List<FeedbackComment> = emptyList())
+data class MsgRes(val message: String = "")
 data class VoteRes(val message: String, val transactionId: String, val position: String = "", val complete: Boolean = false)
 
 /** Announcement categories, in the order the filter chips show them. */
@@ -247,6 +255,11 @@ interface VoteraApi {
     @GET("vote/status") suspend fun voteStatus(): VoteStatusRes
     @POST("vote") suspend fun vote(@Body b: VoteReq): VoteRes
     @GET("results") suspend fun results(): ResultsRes
+    @GET("vote/verify") suspend fun verifyReceipt(@Query("tx") tx: String): VerifyRes
+    @POST("feedback") suspend fun sendFeedback(@Body b: FeedbackReq): MsgRes
+    @GET("feedback/mine") suspend fun myFeedback(): FeedbackMine
+    @GET("admin/feedback") suspend fun feedbackSummary(): FeedbackSummary
+    @GET("admin/backup") suspend fun backup(): ResponseBody
 }
 
 object Net {
