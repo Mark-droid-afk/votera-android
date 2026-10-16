@@ -450,6 +450,13 @@ class AppVM : ViewModel() {
         loadAll()
         success = "Election reset" to "${r.votesRemoved} votes were removed and the election is ready again."
     }
+    /** Adds fictional candidates for Auditor and the councilor positions, so the ballot shows every SSC position. */
+    fun demoCandidates() = launchTask {
+        val r = Net.api.demoCandidates()
+        loadAll()
+        success = (if (r.added > 0) "Sample candidates added" else "Nothing to add") to
+            (if (r.added > 0) "${r.added} fictional candidates were added for the other positions." else "The sample candidates are already on the ballot.")
+    }
     fun demoFill(count: Int) = launchTask {
         val r = Net.api.demoFill(DemoReq(count))
         loadAll()
