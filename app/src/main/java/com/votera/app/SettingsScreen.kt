@@ -101,7 +101,7 @@ fun SettingsScreen(vm: AppVM) {
         }
 
         Section("Help") {
-            OutlinedButton(onClick = { vm.showTutorial = true }, modifier = Modifier.fillMaxWidth()) { Text("Replay the tutorial") }
+            OutlinedButton(onClick = { vm.showTutorial = true }, modifier = Modifier.fillMaxWidth()) { Text("Replay the guided tour") }
             TextButton(onClick = { howScoring = !howScoring }) { Text(if (howScoring) "Hide how scoring works" else "How scoring works") }
             if (howScoring) Text(
                 "Credibility Score = originality x 35% + verified achievements x 30% + leadership experience x 20% + community involvement x 15%. " +
