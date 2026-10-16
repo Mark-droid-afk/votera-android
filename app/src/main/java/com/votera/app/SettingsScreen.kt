@@ -95,6 +95,11 @@ fun SettingsScreen(vm: AppVM) {
             }
         }
 
+        if (vm.user?.role == "student") Section("Feedback and trust") {
+            OutlinedButton(onClick = { vm.showFeedback = true }, modifier = Modifier.fillMaxWidth()) { Text("Rate VotEra") }
+            OutlinedButton(onClick = { vm.showVerify = true }, modifier = Modifier.fillMaxWidth()) { Text("Verify a receipt") }
+        }
+
         Section("Help") {
             OutlinedButton(onClick = { vm.showTutorial = true }, modifier = Modifier.fillMaxWidth()) { Text("Replay the tutorial") }
             TextButton(onClick = { howScoring = !howScoring }) { Text(if (howScoring) "Hide how scoring works" else "How scoring works") }
@@ -161,7 +166,7 @@ private val STUDENT_SLIDES = listOf(
     Slide(VIcons.Shield, "Welcome to VotEra", "This is a simulated Supreme Student Council election for a research study at PUP Quezon City. The candidates and data are fictional."),
     Slide(VIcons.People, "Read the candidates", "Open the Candidates tab and tap a candidate to read the platform. Use the Compare tab to place candidates side by side, or try Match me to see who fits the qualities you care about most (a guide only, not a vote)."),
     Slide(VIcons.Bars, "Understand the credibility score", "Each candidate has a score from 0 to 100: originality 35%, verified achievements 30%, leadership 20%, community 15%. A flag means a manifesto is very similar to another and is under review. It does not disqualify anyone."),
-    Slide(VIcons.Check, "Vote once", "Open a candidate, tap Vote, then confirm. Each student can vote once and a vote cannot be changed. You get a receipt with a transaction ID."),
+    Slide(VIcons.Check, "Vote once", "Open a candidate and tap Select, then review your ballot and submit. You vote once for each position and a vote cannot be changed. You get a receipt with a transaction ID per position."),
     Slide(VIcons.Bell, "Follow the results", "The Results tab shows turnout and totals, updating live on every device. Other students' individual votes are never shown. Announcements are in the Updates tab.")
 )
 
