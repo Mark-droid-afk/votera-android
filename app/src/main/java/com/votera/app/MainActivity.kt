@@ -113,6 +113,8 @@ class AppVM : ViewModel() {
     /** Choices made on the ballot but not sent yet: position key -> candidate id. They are sent together from the review screen. */
     val picks = mutableStateMapOf<String, Int>()
     var showReview by mutableStateOf(false)
+    /** Position key of the tab open on the Candidates screen (President, Vice President, ...). */
+    var positionTab by mutableStateOf("")
     var showFeedback by mutableStateOf(false)
     var showVerify by mutableStateOf(false)
     var feedbackSummary by mutableStateOf<FeedbackSummary?>(null)
@@ -358,7 +360,7 @@ class AppVM : ViewModel() {
 
     fun logout() {
         stopLive()
-        picks.clear(); showReview = false; showFeedback = false; showVerify = false; feedbackSummary = null
+        picks.clear(); showReview = false; positionTab = ""; showFeedback = false; showVerify = false; feedbackSummary = null
         Session.token = null
         user = null; election = null; candidates = emptyList(); announcements = emptyList()
         results = null; voteStatus = null; flagged = emptyList(); otpToken = ""; devOtp = ""
@@ -907,7 +909,7 @@ fun LoginScreen(vm: AppVM) {
         OutlinedTextField(
             sn, { sn = if (admin) it else it.uppercase().filter { ch -> ch.isLetterOrDigit() || ch == '-' } },
             label = { Text(if (admin) "Administrator ID" else "Student number") },
-            placeholder = { Text(if (admin) "ADMIN-001" else "2020-00000-CM-0") },
+            placeholder = { Text(if (admin) "ADMIN-000" else "2020-00000-CM-0") },
             supportingText = {
                 if (!admin) Text(if (sn.isNotEmpty() && !snValid) "Use the format YYYY-NNNNN-CM-N" else "Format: YYYY-NNNNN-CM-N, for example 2020-00000-CM-0")
             },
@@ -1046,10 +1048,36 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                 if (!vm.loaded) items(3) { SkeletonCard() }
                 else item { Empty(if (vm.candidates.isEmpty()) "No candidates yet." else "No candidate matches your search.") }
             }
-            groupByPosition(shown).forEach { (pos, list) ->
+            val groups = groupByPosition(shown)
+            if (groups.isNotEmpty()) {
+                val sel = groups.indexOfFirst { posKey(it.first) == vm.positionTab }.let { if (it < 0) 0 else it }
+                val isStudent = vm.user?.role == "student"
+                item(key = "pos-tabs") {
+                    ScrollableTabRow(selectedTabIndex = sel, edgePadding = 0.dp, containerColor = androidx.compose.ui.graphics.Color.Transparent) {
+                        groups.forEachIndexed { i, (pos, list) ->
+                            val m = vm.voteStatus?.positions?.firstOrNull { posKey(it.position) == posKey(pos) }
+                            Tab(selected = i == sel, onClick = { vm.positionTab = posKey(pos) },
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(ellipsize(posShort(pos), 14), maxLines = 1, fontSize = 13.sp)
+                                        if (isStudent && m?.voted == true) { Spacer(Modifier.width(4.dp)); Icon(VIcons.Check, contentDescription = "Voted", tint = GREEN, modifier = Modifier.size(14.dp)) }
+                                        else if (isStudent && vm.picks[posKey(pos)] != null) { Spacer(Modifier.width(4.dp)); Box(Modifier.size(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary)) }
+                                        else { Spacer(Modifier.width(4.dp)); Text("${list.size}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                    }
+                                })
+                        }
+                    }
+                }
+                val (pos, list) = groups[sel]
                 val mine = vm.voteStatus?.positions?.firstOrNull { posKey(it.position) == posKey(pos) }
-                item(key = "pos:$pos") { PositionHeader(pos, list.size, mine, vm.user?.role == "student", vm.picks[posKey(pos)] != null) }
+                item(key = "pos:$pos") { PositionHeader(pos, list.size, mine, isStudent, vm.picks[posKey(pos)] != null) }
                 items(list, key = { it.id }) { c -> CandidateCard(c, mine?.candidateId == c.id, { onOpen(c.id) }, vm.picks[posKey(pos)] == c.id) }
+                if (groups.size > 1) item(key = "pos-next") {
+                    val nextIdx = (sel + 1) % groups.size
+                    OutlinedButton(onClick = { vm.positionTab = posKey(groups[nextIdx].first) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Next position: ${ellipsize(posShort(groups[nextIdx].first), 28)}", maxLines = 1)
+                    }
+                }
             }
         }
     }
@@ -1438,7 +1466,9 @@ private fun BallotBar(vm: AppVM) {
             Column(Modifier.weight(1f)) {
                 Text("Your ballot", fontWeight = FontWeight.Bold, maxLines = 1)
                 Text("$selected of ${left.size} open positions selected", fontSize = 12.sp, maxLines = 1)
-                if (next != null) Text("Next: ${ellipsize(next.position, 28)}", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                if (next != null) TextButton(onClick = { vm.positionTab = posKey(next.position) }, contentPadding = PaddingValues(0.dp)) {
+                    Text("Next: ${ellipsize(next.position, 28)}", fontSize = 12.sp, maxLines = 1)
+                }
             }
             Button(onClick = { vm.showReview = true }, enabled = selected > 0) { Text("Review ballot", maxLines = 1) }
         }
