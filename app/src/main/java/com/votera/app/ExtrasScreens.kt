@@ -6,6 +6,20 @@ import android.print.PrintAttributes
 import android.print.PrintManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.core.animateRectAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.composed
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -444,7 +458,8 @@ fun WelcomeScreen(onDone: () -> Unit) {
     val last = pager.currentPage == pages.lastIndex
     BackHandler { onDone() }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 8.dp)) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 24.dp, vertical = 8.dp)) {
+            // Skip and theme buttons are fixed here, above the pager, so they never move when pages swipe or scroll.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 if (last) Spacer(Modifier.height(48.dp)) else TextButton(onClick = onDone) { Text("Skip") }
                 ThemeToggleButton()
@@ -981,6 +996,103 @@ fun AdminInsights(vm: AppVM) {
                         Row { Text(l, fontSize = 13.sp, modifier = Modifier.weight(1f)); Text(fmt(v), fontSize = 13.sp, fontWeight = FontWeight.Bold) }
                     }
                     fb.comments.take(5).forEach { Text("\"${ellipsize(it.comment, 80)}\" (${ellipsize(it.program, 16)})", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+            }
+        }
+    }
+}
+
+// ---------------- Guided tour: highlights real buttons and says what they do ----------------
+/** One step of the tour. target = the id given to a screen element with Modifier.tourTarget (null = a centered card). tab / adminSub = what to show first. */
+data class TourStep(val target: String?, val title: String, val body: String, val tab: String? = null, val adminSub: String? = null)
+
+/** Where each marked element is on screen, and which step is showing (-1 = the tour is off). */
+class TourState {
+    val rects = mutableStateMapOf<String, Rect>()
+    var step by mutableStateOf(-1)
+    val active: Boolean get() = step >= 0
+}
+
+val LocalTour = compositionLocalOf<TourState?> { null }
+
+/** Marks an element as a tour target. Costs nothing when no tour is running. */
+fun Modifier.tourTarget(id: String): Modifier = composed {
+    val t = LocalTour.current
+    if (t == null) this else {
+        DisposableEffect(id) { onDispose { t.rects.remove(id) } }
+        this.onGloballyPositioned { c -> t.rects[id] = c.boundsInRoot() }
+    }
+}
+
+fun tourSteps(isAdmin: Boolean): List<TourStep> {
+    val common = listOf(
+        TourStep("title", "Welcome to VotEra", "This bar shows the app name. The Live badge under it means updates arrive as they happen. If it says Reconnecting, give it a moment.", if (isAdmin) "admin" else "candidates", if (isAdmin) "overview" else null),
+        TourStep("help", "Help and tour", "Tap here any time for answers, privacy information, and to play this tour again."),
+        TourStep("settings", "Settings", "Change the theme, text size, high contrast and motion. Students can also rate VotEra and verify a receipt here."),
+        TourStep("logout", "Log out", "Ends your session. The app asks you to confirm first, and logs you out by itself after 15 minutes without use.")
+    )
+    if (isAdmin) return common + listOf(
+        TourStep("chip_overview", "Overview", "Open or close the election, set a closing time, and watch turnout. The checklist and warnings tell you what still needs attention.", "admin", "overview"),
+        TourStep("chip_posts", "Posts", "Write announcements with a category, an optional picture, and a pin to keep one at the top.", "admin", "posts"),
+        TourStep("chip_candidates", "Candidates", "Add or edit candidates. Pick the position from the list, or choose Other to type your own, then enter the scores.", "admin", "candidates"),
+        TourStep("chip_audit", "Vote audit", "Shows who voted for whom, for each position. Only administrators see this, and it is confidential.", "admin", "audit"),
+        TourStep("chip_voters", "Voters", "See who has voted, add voters from a sheet, and share the list of students who have not voted yet.", "admin", "voters"),
+        TourStep("chip_report", "Report", "A ranking for each position with winners. Share it as text or print it as a PDF for your paper.", "admin", "report"),
+        TourStep("chip_activity", "Activity", "A read-only log of logins, wrong attempts, status changes and votes cast. Choices are never logged here.", "admin", "activity"),
+        TourStep("chip_selftest", "Self-test", "Runs the Chapter 3 methods on known inputs and shows whether each one passes.", "admin", "selftest"),
+        TourStep(null, "You are ready", "On Overview, scroll down to Tools for sample candidates, demo votes, backup, new passwords and reset. Replay this tour from the Help button.", "admin", "overview")
+    )
+    return common + listOf(
+        TourStep("status", "Election status", "Shows whether the election is Upcoming, Open or Closed, the countdown, and how many positions you have voted for.", "candidates"),
+        TourStep("positions", "One tab for each position", "Swipe across President, Vice President and the rest. A check means you voted there. A dot means you selected someone but have not submitted yet.", "candidates"),
+        TourStep("candidate", "Read before you choose", "Tap a candidate to read the platform, achievements and credibility score. On the profile, tap Select. Selecting does not send your vote.", "candidates"),
+        TourStep("ballot", "Your ballot", "This card counts your selections. Tap Review ballot to check every pick, then Submit. A recorded vote cannot be changed. If you do not see this card, voting is not open right now.", "candidates"),
+        TourStep("nav_compare", "Compare", "Put candidates side by side, or try Match me to see who fits what you care about.", "compare"),
+        TourStep("nav_updates", "Updates", "Announcements from the election committee. Filter them by category, and open a post to read it fully.", "updates"),
+        TourStep("nav_results", "Results", "Live totals for each position, as bars or a donut. Other students only see totals, never individual votes.", "results"),
+        TourStep(null, "You are ready", "Tap the Help button at the top to play this tour again. After you vote, you can rate VotEra and verify your receipt.", "candidates")
+    )
+}
+
+@Composable
+fun TourOverlay(tour: TourState, steps: List<TourStep>, onFinish: () -> Unit) {
+    if (steps.isEmpty()) return
+    val i = tour.step.coerceIn(0, steps.lastIndex)
+    val s = steps[i]
+    val last = i == steps.lastIndex
+    val density = LocalDensity.current
+    val target = s.target?.let { tour.rects[it] }
+    val pad = with(density) { 6.dp.toPx() }
+    val goal = if (target != null) Rect(target.left - pad, target.top - pad, target.right + pad, target.bottom + pad) else Rect.Zero
+    val remembered = remember { arrayOf(goal) }
+    if (target != null) remembered[0] = goal
+    val rect by animateRectAsState(remembered[0], if (Prefs.reduceMotion) snap() else tween(260), label = "tourRect")
+    BackHandler { onFinish() }
+    BoxWithConstraints(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } }) {
+        val screenH = with(density) { maxHeight.toPx() }
+        Canvas(Modifier.fillMaxSize().graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)) {
+            drawRect(Color.Black.copy(alpha = 0.74f))
+            if (target != null) drawRoundRect(Color.Black, rect.topLeft, rect.size, CornerRadius(14.dp.toPx()), blendMode = BlendMode.Clear)
+        }
+        if (target != null) Canvas(Modifier.fillMaxSize()) {
+            drawRoundRect(Color.White, rect.topLeft, rect.size, CornerRadius(14.dp.toPx()), style = Stroke(2.5.dp.toPx()))
+        }
+        val cardMod = when {
+            target == null -> Modifier.align(Alignment.Center)
+            rect.center.y < screenH / 2 -> Modifier.align(Alignment.TopCenter).padding(top = (rect.bottom / density.density).dp + 10.dp)
+            else -> Modifier.align(Alignment.BottomCenter).padding(bottom = ((screenH - rect.top) / density.density).dp + 10.dp)
+        }
+        Card(cardMod.padding(horizontal = 16.dp).widthIn(max = 420.dp).fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("${i + 1} of ${steps.size}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(s.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(s.body, fontSize = 14.sp)
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (!last) TextButton(onClick = onFinish) { Text("Skip") }
+                    Spacer(Modifier.weight(1f))
+                    if (i > 0) OutlinedButton(onClick = { tour.step = i - 1 }) { Text("Back") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = { if (last) onFinish() else tour.step = i + 1 }) { Text(if (last) "Get started" else "Next") }
                 }
             }
         }
