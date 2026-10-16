@@ -40,13 +40,18 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun AdminTab(vm: AppVM) {
     val sub = vm.adminSub
+    val chipScroll = rememberScrollState()
+    val chipIds = listOf("overview", "posts", "candidates", "audit", "voters", "report", "activity", "selftest")
+    val chipDensity = androidx.compose.ui.platform.LocalDensity.current
+    // Keeps the chosen chip in view (also when the guided tour jumps to it).
+    LaunchedEffect(sub) { chipScroll.animateScrollTo(with(chipDensity) { (chipIds.indexOf(sub).coerceAtLeast(0) * 105).dp.toPx().toInt() }) }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+        Row(Modifier.horizontalScroll(chipScroll).padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(Triple("overview", "Overview", VIcons.Dashboard), Triple("posts", "Posts", VIcons.Bell), Triple("candidates", "Candidates", VIcons.People),
                 Triple("audit", "Vote audit", VIcons.Ballot), Triple("voters", "Voters", VIcons.Check), Triple("report", "Report", VIcons.Doc),
                 Triple("activity", "Activity", VIcons.Clock), Triple("selftest", "Self-test", VIcons.Shield)).forEach { (id, label, icon) ->
-                FilterChip(selected = sub == id, onClick = { vm.adminSub = id },
+                FilterChip(selected = sub == id, onClick = { vm.adminSub = id }, modifier = Modifier.tourTarget("chip_$id"),
                     leadingIcon = { Icon(icon, contentDescription = null, Modifier.size(16.dp)) },
                     label = { Text(label, maxLines = 1) })
             }
