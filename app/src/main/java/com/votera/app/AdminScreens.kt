@@ -148,6 +148,7 @@ fun AdminOverview(vm: AppVM) {
                 }
             }
         }
+        item { AdminInsights(vm) }
         item {
             Card {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -172,6 +173,14 @@ fun AdminOverview(vm: AppVM) {
                         }
                     }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
                         Icon(VIcons.Download, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Export vote list (CSV)")
+                    }
+                    OutlinedButton(onClick = {
+                        vm.exportBackup { text ->
+                            val send = Intent(Intent.ACTION_SEND).apply { type = "application/json"; putExtra(Intent.EXTRA_SUBJECT, "votera_backup.json"); putExtra(Intent.EXTRA_TEXT, text) }
+                            ctx.startActivity(Intent.createChooser(send, "Share backup (JSON)"))
+                        }
+                    }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
+                        Icon(VIcons.Download, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Backup everything (JSON)")
                     }
                     OutlinedButton(onClick = { confirmDemo = true }, enabled = !vm.busy && vm.election?.status == "open", modifier = Modifier.fillMaxWidth()) {
                         Text("Demo mode: add 20 sample votes")
@@ -493,6 +502,15 @@ fun AdminVoters(vm: AppVM) {
                     Button(onClick = { showImport = true }) { Icon(VIcons.Download, contentDescription = null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Upload sheet") }
                 }
                 OutlinedTextField(q, { q = it }, label = { Text("Search name, student number or program") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                val ctx = LocalContext.current
+                val missing = vm.voters.filter { !it.hasVoted }
+                OutlinedButton(onClick = {
+                    val text = "Students who have not voted yet (${missing.size})\n" + missing.joinToString("\n") { "${it.fullName} - ${it.studentNumber} - ${it.program}" }
+                    val send = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_SUBJECT, "VotEra: who has not voted"); putExtra(Intent.EXTRA_TEXT, text) }
+                    ctx.startActivity(Intent.createChooser(send, "Share the not-voted list"))
+                }, enabled = missing.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+                    Icon(VIcons.Bell, contentDescription = null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Share list of ${missing.size} who have not voted", maxLines = 1)
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("all" to "All", "voted" to "Voted", "not" to "Not yet").forEach { (id, label) ->
                         FilterChip(selected = filter == id, onClick = { filter = id }, label = { Text(label) })
