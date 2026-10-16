@@ -182,6 +182,11 @@ fun AdminOverview(vm: AppVM) {
                     }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
                         Icon(VIcons.Download, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Backup everything (JSON)")
                     }
+                    OutlinedButton(onClick = { vm.demoCandidates() }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
+                        Icon(VIcons.People, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Add sample candidates for all positions", maxLines = 1)
+                    }
+                    Text("Adds 16 fictional candidates for Auditor and the 7 councilor positions. Pressing it again adds nothing new. Not available after votes are cast.",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedButton(onClick = { confirmDemo = true }, enabled = !vm.busy && vm.election?.status == "open", modifier = Modifier.fillMaxWidth()) {
                         Text("Demo mode: add 20 sample votes")
                     }
