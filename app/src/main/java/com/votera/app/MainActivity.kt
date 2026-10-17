@@ -404,15 +404,17 @@ class AppVM : ViewModel() {
         announcements = Net.api.announcements()
         success = "Post deleted" to "The post was removed from Updates."
     }
-    fun addCandidate(req: CandidateReq, photo: ByteArray?) = launchTask {
+    fun addCandidate(req: CandidateReq, photo: ByteArray?, proofs: List<ProofDraft> = emptyList()) = launchTask {
         val c = Net.api.addCandidate(req)
         if (photo != null) Net.api.uploadPhoto(c.id, jpegBody(photo))
+        proofs.forEach { Net.api.uploadProof(c.id, it.category, it.caption, it.issuer, it.issuedOn, jpegBody(it.bytes)) }
         loadAll()
         success = "Candidate added" to "Similarity and credibility were recomputed for every candidate."
     }
-    fun editCandidate(id: Int, req: CandidateReq, photo: ByteArray?) = launchTask {
+    fun editCandidate(id: Int, req: CandidateReq, photo: ByteArray?, proofs: List<ProofDraft> = emptyList()) = launchTask {
         Net.api.editCandidate(id, req)
         if (photo != null) Net.api.uploadPhoto(id, jpegBody(photo))
+        proofs.forEach { Net.api.uploadProof(id, it.category, it.caption, it.issuer, it.issuedOn, jpegBody(it.bytes)) }
         loadAll()
         success = "Candidate updated" to "Similarity and credibility were recomputed for every candidate."
     }
@@ -1182,8 +1184,12 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
             fontSize = 13.sp, fontWeight = FontWeight.Medium)
         Block("Platform / manifesto", c.manifesto)
         Block("Verified achievements", c.achievements)
+        ProofBadge(c.proofAchievements)
         Block("Leadership experience", c.leadership)
+        ProofBadge(c.proofLeadership)
         Block("Community involvement", c.community)
+        ProofBadge(c.proofCommunity)
+        if (c.proofCount > 0) ProofGallery(c, isAdmin)
         if (!c.qa.isNullOrBlank()) Block("Questions and answers", c.qa)
         if (!c.videoUrl.isNullOrBlank()) {
             val uri = LocalUriHandler.current
