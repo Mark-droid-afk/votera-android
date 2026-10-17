@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -130,6 +131,15 @@ class AppVM : ViewModel() {
     var showReview by mutableStateOf(false)
     /** Position key of the tab open on the Candidates screen (President, Vice President, ...). */
     var positionTab by mutableStateOf("")
+    var positionDir by mutableStateOf(1)   // 1 = moving to a later position, -1 = to an earlier one (used by the slide-in motion)
+    /** Switches the position tab and remembers which way the person moved, so the new candidates glide in from that side. */
+    fun selectPosition(position: String) {
+        val k = posKey(position)
+        if (k == positionTab) return
+        positionDir = if (positionRank(k) >= positionRank(positionTab.ifEmpty { k })) 1 else -1
+        EnterSeen.reset()
+        positionTab = k
+    }
     var showFeedback by mutableStateOf(false)
     var showVerify by mutableStateOf(false)
     var feedbackSummary by mutableStateOf<FeedbackSummary?>(null)
@@ -1088,7 +1098,7 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                     ScrollableTabRow(selectedTabIndex = sel, modifier = Modifier.tourTarget("positions"), edgePadding = 0.dp, containerColor = androidx.compose.ui.graphics.Color.Transparent) {
                         groups.forEachIndexed { i, (pos, list) ->
                             val m = vm.voteStatus?.positions?.firstOrNull { posKey(it.position) == posKey(pos) }
-                            Tab(selected = i == sel, onClick = { vm.positionTab = posKey(pos) },
+                            Tab(selected = i == sel, onClick = { vm.selectPosition(pos) },
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(ellipsize(posShort(pos), 14), maxLines = 1, fontSize = 13.sp)
@@ -1102,15 +1112,15 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
                 }
                 val (pos, list) = groups[sel]
                 val mine = vm.voteStatus?.positions?.firstOrNull { posKey(it.position) == posKey(pos) }
-                item(key = "pos:$pos") { PositionHeader(pos, list.size, mine, isStudent, vm.picks[posKey(pos)] != null) }
-                items(list, key = { it.id }) { c ->
-                    Box(if (c.id == list.first().id) Modifier.tourTarget("candidate") else Modifier) {
+                item(key = "pos:$pos") { Box(Modifier.smoothEnter("head:${posKey(pos)}", 0, vm.positionDir)) { PositionHeader(pos, list.size, mine, isStudent, vm.picks[posKey(pos)] != null) } }
+                itemsIndexed(list, key = { _, c -> c.id }) { idx, c ->
+                    Box((if (c.id == list.first().id) Modifier.tourTarget("candidate") else Modifier).smoothEnter("cand:${posKey(pos)}:${c.id}", idx + 1, vm.positionDir)) {
                         CandidateCard(c, mine?.candidateId == c.id, { onOpen(c.id) }, vm.picks[posKey(pos)] == c.id)
                     }
                 }
                 if (groups.size > 1) item(key = "pos-next") {
                     val nextIdx = (sel + 1) % groups.size
-                    OutlinedButton(onClick = { vm.positionTab = posKey(groups[nextIdx].first) }, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { vm.selectPosition(groups[nextIdx].first) }, modifier = Modifier.fillMaxWidth().smoothEnter("next:${posKey(pos)}", list.size + 1, vm.positionDir)) {
                         Text("Next position: ${ellipsize(posShort(groups[nextIdx].first), 28)}", maxLines = 1)
                     }
                 }
@@ -1398,7 +1408,9 @@ fun PieChart(rows: List<ResultRowDto>) {
 @Composable
 fun ResultRow(r: ResultRowDto, candidate: CandidateDto?, showBar: Boolean) {
     val color = PALETTE[r.candidateId % PALETTE.size]
-    val p by animateFloatAsState((r.percent / 100).toFloat().coerceIn(0f, 1f), animationSpec = tween(600), label = "result")
+    var grown by remember { mutableStateOf(Prefs.reduceMotion) }
+    LaunchedEffect(Unit) { grown = true }
+    val p by animateFloatAsState(if (grown) (r.percent / 100).toFloat().coerceIn(0f, 1f) else 0f, animationSpec = tween(700), label = "result")
     val leader = r.rank == 1 && r.votes > 0
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1426,6 +1438,7 @@ fun ResultRow(r: ResultRowDto, candidate: CandidateDto?, showBar: Boolean) {
 fun ResultsTab(vm: AppVM) {
     var mode by remember { mutableStateOf("bar") }
     var picked by remember { mutableStateOf<String?>(null) }
+    var resDir by remember { mutableStateOf(1) }
     val res = vm.results
     PullToRefreshBox(isRefreshing = vm.refreshing, onRefresh = { vm.refresh() }, modifier = Modifier.fillMaxSize()) {
         if (res == null) {
@@ -1450,7 +1463,7 @@ fun ResultsTab(vm: AppVM) {
                     }
                 }
                 if (positions.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    positions.forEach { p -> FilterChip(selected = p == pos, onClick = { picked = p }, label = { Text(ellipsize(posShort(p), 18), maxLines = 1) }) }
+                    positions.forEach { p -> FilterChip(selected = p == pos, onClick = { if (p != pos) { resDir = if (positions.indexOf(p) >= positions.indexOf(pos)) 1 else -1; picked = p } }, label = { Text(ellipsize(posShort(p), 18), maxLines = 1) }) }
                 }
                 if (pos != null) Text(pos, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1458,7 +1471,11 @@ fun ResultsTab(vm: AppVM) {
                     FilterChip(selected = mode == "pie", onClick = { mode = "pie" }, leadingIcon = { Icon(VIcons.Dashboard, contentDescription = null, Modifier.size(16.dp)) }, label = { Text("Donut chart", maxLines = 1) })
                 }
                 if (mode == "pie") key(pos) { PieChart(rows) }
-                rows.forEach { r -> ResultRow(r, vm.candidates.firstOrNull { it.id == r.candidateId }, showBar = mode == "bar") }
+                rows.forEachIndexed { i, r ->
+                    key(pos, r.candidateId) {
+                        Box(Modifier.smoothEnter("res:$pos:${r.candidateId}:$resDir", i, resDir)) { ResultRow(r, vm.candidates.firstOrNull { it.id == r.candidateId }, showBar = mode == "bar") }
+                    }
+                }
                 Text("Totals only. Individual choices are not shown to other students.", fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -1506,7 +1523,7 @@ private fun BallotBar(vm: AppVM) {
             Column(Modifier.weight(1f)) {
                 Text("Your ballot", fontWeight = FontWeight.Bold, maxLines = 1)
                 Text("$selected of ${left.size} open positions selected", fontSize = 12.sp, maxLines = 1)
-                if (next != null) TextButton(onClick = { vm.positionTab = posKey(next.position) }, contentPadding = PaddingValues(0.dp)) {
+                if (next != null) TextButton(onClick = { vm.selectPosition(next.position) }, contentPadding = PaddingValues(0.dp)) {
                     Text("Next: ${next.position}", fontSize = 12.sp, maxLines = 2)
                 }
             }
