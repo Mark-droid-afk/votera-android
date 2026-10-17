@@ -980,7 +980,7 @@ fun OtpScreen(vm: AppVM) {
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
         Text("Enter your one-time password", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
             Column(Modifier.padding(16.dp)) {
                 Text("Simulated OTP delivery (prototype)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
                 Text(vm.devOtp, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
@@ -1013,7 +1013,7 @@ fun CandidatesTab(vm: AppVM, onOpen: (Int) -> Unit) {
             item {
                 val e = vm.election
                 val vs = vm.voteStatus
-                Card(Modifier.tourTarget("status"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                Card(Modifier.fillMaxWidth().tourTarget("status"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Election status", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -1110,10 +1110,8 @@ private fun PositionHeader(position: String, count: Int, mine: PositionVoteDto?,
     val info = findPosition(position)
     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Row(Modifier.fillMaxWidth().then(if (info != null) Modifier.clickable { open = !open } else Modifier), verticalAlignment = Alignment.CenterVertically) {
-            Text(ellipsize(position, 24), Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(position, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3)
             if (info != null) { Spacer(Modifier.width(4.dp)); Icon(VIcons.Help, contentDescription = "About this position", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp)) }
-            Spacer(Modifier.width(8.dp))
-            Text(if (count == 1) "1 candidate" else "$count candidates", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.weight(1f))
             if (student) {
                 if (mine?.voted == true) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1124,6 +1122,7 @@ private fun PositionHeader(position: String, count: Int, mine: PositionVoteDto?,
                 else Text("Not voted yet", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        Text(if (count == 1) "1 candidate" else "$count candidates", fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (open && info != null) Text(info.duty, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
     }
 }
@@ -1169,11 +1168,12 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(ellipsize(c.fullName, 40), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2)
-                Text("${ellipsize(c.position, 24)} | ${ellipsize(c.program, 24)}", maxLines = 2)
+                Text(c.position, maxLines = 3)
+                Text(ellipsize(c.program, 30), maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             CredRing(c.credibilityScore, 64.dp, 6.dp)
         }
-        if (c.flagged) Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+        if (c.flagged) Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
             Text("This manifesto is very similar to another candidate's (${fmt((c.highestSimilarity ?: 0.0) * 100)}% similarity). " +
                 "It is flagged for administrator review. A flag does not disqualify the candidate.",
                 Modifier.padding(12.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onErrorContainer)
@@ -1189,7 +1189,7 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
             val uri = LocalUriHandler.current
             OutlinedButton(onClick = { runCatching { uri.openUri(c.videoUrl) } }, modifier = Modifier.fillMaxWidth()) { Text("Watch platform video") }
         }
-        Card {
+        Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Credibility score breakdown", style = MaterialTheme.typography.titleMedium)
                 ScoreBar("Originality", "35%", c.originalityScore)
@@ -1215,11 +1215,11 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
             colors = if (picked) ButtonDefaults.buttonColors(containerColor = GREEN) else ButtonDefaults.buttonColors()) {
             Text(when {
                 voted && mine?.candidateId == c.id -> "You voted for ${ellipsize(c.fullName, 20)}"
-                voted -> "You already voted for ${ellipsize(c.position, 22)}"
+                voted -> "You already voted for ${c.position}"
                 !open -> "Voting is not open"
                 picked -> "Selected. Tap to undo"
-                else -> "Select ${ellipsize(c.fullName, 22)} for ${ellipsize(c.position, 20)}"
-            }, maxLines = 1)
+                else -> "Select ${ellipsize(c.fullName, 22)} for ${c.position}"
+            }, maxLines = 2)
         }
         if (isStudent && open && !voted) Text("Selecting does not send your vote. You review everything first.", fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1247,7 +1247,7 @@ fun ReceiptScreen(vm: AppVM, onResults: () -> Unit, onDone: () -> Unit) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(ellipsize(p.position, 26), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, modifier = Modifier.weight(1f))
+                        Text(p.position, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, maxLines = 2, modifier = Modifier.weight(1f))
                         Text(if (p.voted) "Voted" else "Not voted yet", fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1,
                             color = if (p.voted) GREEN else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -1419,7 +1419,7 @@ fun ResultsTab(vm: AppVM) {
             val pos = picked?.takeIf { it in positions } ?: positions.firstOrNull()
             val rows = res.results.filter { pos == null || it.position == pos }
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Card {
+                Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Voter turnout", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
@@ -1450,7 +1450,7 @@ fun ResultsTab(vm: AppVM) {
 /** Three-step guide on the student home screen. */
 @Composable
 fun HowToVote(done: Boolean, open: Boolean) {
-    Card {
+    Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("How to vote", style = MaterialTheme.typography.titleMedium)
             listOf(
@@ -1482,13 +1482,13 @@ private fun BallotBar(vm: AppVM) {
     val left = positions.filter { !it.voted }
     val selected = left.count { vm.picks[posKey(it.position)] != null }
     val next = left.firstOrNull { vm.picks[posKey(it.position)] == null }
-    Card(Modifier.tourTarget("ballot"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+    Card(Modifier.fillMaxWidth().tourTarget("ballot"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Your ballot", fontWeight = FontWeight.Bold, maxLines = 1)
                 Text("$selected of ${left.size} open positions selected", fontSize = 12.sp, maxLines = 1)
                 if (next != null) TextButton(onClick = { vm.positionTab = posKey(next.position) }, contentPadding = PaddingValues(0.dp)) {
-                    Text("Next: ${ellipsize(next.position, 28)}", fontSize = 12.sp, maxLines = 1)
+                    Text("Next: ${next.position}", fontSize = 12.sp, maxLines = 2)
                 }
             }
             Button(onClick = { vm.showReview = true }, enabled = selected > 0) { Text("Review ballot", maxLines = 1) }
@@ -1510,7 +1510,7 @@ private fun ReviewBallotSheet(vm: AppVM, onChange: () -> Unit) {
                 val cand = id?.let { i -> vm.candidates.firstOrNull { it.id == i } }
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(ellipsize(p.position, 30), fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(p.position, fontSize = 12.sp, maxLines = 2, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(when {
                             p.voted -> ellipsize(p.candidateName ?: "", 28)
                             cand != null -> ellipsize(cand.fullName, 28)
