@@ -139,7 +139,8 @@ fun receiptHtml(vm: AppVM): String {
 fun reportHtml(vm: AppVM): String {
     val b = StringBuilder()
     val res = vm.results
-    b.append("<p>${htmlEscape(vm.election?.title ?: "")} (status: ${htmlEscape(vm.election?.status ?: "-")})</p>")
+    val today = SimpleDateFormat("MMMM d, yyyy h:mm a", Locale.getDefault()).format(java.util.Date())
+    b.append("<p>${htmlEscape(vm.election?.title ?: "")} (status: ${htmlEscape(vm.election?.status ?: "-")})<br>Generated: $today</p>")
     if (res != null) {
         b.append("<p>Turnout: ${res.turnout.votesCast} of ${res.turnout.eligibleVoters} eligible voters (${fmt(res.turnout.turnoutPercent)}%)</p>")
         resultGroups(res.results).forEach { (pos, rows) ->
@@ -151,13 +152,17 @@ fun reportHtml(vm: AppVM): String {
     }
     b.append("<h2>Turnout per program</h2><table><tr><th>Program</th><th>Voted</th><th>Eligible</th><th>Rate</th></tr>")
     vm.turnoutRows.forEach { b.append("<tr><td>${htmlEscape(it.program)}</td><td>${it.voted}</td><td>${it.eligible}</td><td>${fmt(it.percent)}%</td></tr>") }
-    b.append("</table><h2>Credibility scores</h2><table><tr><th>Candidate</th><th>Originality</th><th>Achievements</th><th>Leadership</th><th>Community</th><th>Credibility</th></tr>")
+    b.append("</table><h2>Credibility scores</h2><table><tr><th>Candidate</th><th>Originality</th><th>Achievements</th><th>Leadership</th><th>Community</th><th>Credibility</th><th>Documents</th></tr>")
     vm.candidates.forEach {
         b.append("<tr><td>${htmlEscape(it.fullName)}${if (it.flagged) " (flagged for review)" else ""}</td><td>${fmt(it.originalityScore)}</td>" +
-            "<td>${fmt(it.achievementsScore)}</td><td>${fmt(it.leadershipScore)}</td><td>${fmt(it.communityScore)}</td><td>${fmt(it.credibilityScore)}</td></tr>")
+            "<td>${fmt(it.achievementsScore)}</td><td>${fmt(it.leadershipScore)}</td><td>${fmt(it.communityScore)}</td><td>${fmt(it.credibilityScore)}</td><td>${it.proofCount}</td></tr>")
     }
     b.append("</table><p><small>Credibility = originality x 35% + achievements x 30% + leadership x 20% + community x 15%. " +
         "Originality = 100 minus the highest cosine similarity x 100 (TF-IDF). A manifesto at 0.70 or higher is flagged for administrator review, which is not a rejection.</small></p>")
+    b.append("<br><br><table style=\"border:none\"><tr><td style=\"border:none;padding-top:40px\">______________________<br>Election Committee Chair</td>" +
+        "<td style=\"border:none;padding-top:40px\">______________________<br>Administrator</td>" +
+        "<td style=\"border:none;padding-top:40px\">______________________<br>Adviser</td></tr></table>" +
+        "<p><small>Research prototype with fictional data. Handled under R.A. 10173 (Data Privacy Act of 2012).</small></p>")
     return pageHtml("VotEra election report", b.toString())
 }
 
@@ -223,8 +228,30 @@ private fun prettyAction(a: String): String = when (a) {
 fun AdminActivity(vm: AppVM) {
     val ctx = LocalContext.current
     // Reload when the filter changes, and whenever votes or the status change (so it follows the election live).
-    LaunchedEffect(vm.auditOnlyProblems, vm.results?.turnout?.votesCast, vm.election?.status) { vm.loadAudit() }
+    LaunchedEffect(vm.auditOnlyProblems, vm.results?.turnout?.votesCast, vm.election?.status) { vm.loadAudit(); vm.loadSessions() }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Signed in now (${vm.sessions.size})", style = MaterialTheme.typography.titleMedium)
+                    Text("Accounts active in the last ${vm.sessionsMinutes} minutes. End session signs that account out at its next request.", fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (vm.sessions.isEmpty()) Text("Nobody else is signed in.", fontSize = 13.sp)
+                    vm.sessions.forEach { u ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(ellipsize(u.fullName, 26) + if (u.role == "admin") " (admin)" else "", fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                                Text("${u.studentNumber} | seen ${u.lastSeen?.let { timeAgo(it) } ?: "-"}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (u.studentNumber != vm.user?.studentNumber) TextButton(onClick = { vm.endSession(u.studentNumber) }, enabled = !vm.locked) {
+                                Text("End", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                    TextButton(onClick = { vm.loadSessions() }) { Text("Refresh") }
+                }
+            }
+        }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Activity log", style = MaterialTheme.typography.titleMedium)
@@ -707,7 +734,9 @@ fun PostCard(a: AnnouncementDto, onPin: (() -> Unit)? = null, onDelete: (() -> U
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text("VotEra Election Committee", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(timeAgo(a.createdAt) + if (a.pinned) "  |  Pinned" else "", fontSize = 11.sp, maxLines = 1,
+                        if (a.scheduled && a.publishAt != null) Text("Scheduled for " + localTime(a.publishAt), fontSize = 11.sp, maxLines = 1,
+                            fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                        else Text(timeAgo(a.createdAt) + if (a.pinned) "  |  Pinned" else "", fontSize = 11.sp, maxLines = 1,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.width(8.dp))
@@ -770,6 +799,7 @@ fun AdminPosts(vm: AppVM) {
     var body by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("General") }
     var pinned by remember { mutableStateOf(false) }
+    var delayMin by remember { mutableStateOf(0) }
     var image by remember { mutableStateOf<ByteArray?>(null) }
     var deleting by remember { mutableStateOf<AnnouncementDto?>(null) }
     val preview = remember(image) { image?.let { bytesToImage(it) } }
@@ -804,10 +834,16 @@ fun AdminPosts(vm: AppVM) {
                         Spacer(Modifier.width(10.dp))
                         Text("Pin to the top", fontSize = 13.sp)
                     }
+                    Text("Show to students", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(0 to "Now", 30 to "In 30 min", 60 to "In 1 hour", 1440 to "In 1 day").forEach { (m, label) ->
+                            FilterChip(selected = delayMin == m, onClick = { delayMin = m }, label = { Text(label, maxLines = 1) })
+                        }
+                    }
                     Button(onClick = {
-                        vm.postAnnouncement(title.trim(), body.trim(), category, pinned, image)
-                        title = ""; body = ""; category = "General"; pinned = false; image = null
-                    }, enabled = title.isNotBlank() && !vm.locked, modifier = Modifier.fillMaxWidth()) { Text("Post") }
+                        vm.postAnnouncement(title.trim(), body.trim(), category, pinned, image, if (delayMin > 0) delayMin else null)
+                        title = ""; body = ""; category = "General"; pinned = false; image = null; delayMin = 0
+                    }, enabled = title.isNotBlank() && !vm.locked, modifier = Modifier.fillMaxWidth()) { Text(if (delayMin > 0) "Schedule post" else "Post") }
                     Text("Students see new posts right away. Pictures are shrunk before they are sent.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
