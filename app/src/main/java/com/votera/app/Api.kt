@@ -25,6 +25,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
@@ -156,7 +157,12 @@ data class CandidateDto(
     val mostSimilarName: String? = null,  // sent to administrators only
     val photoVersion: Int = 0,            // 0 = no photo; changes whenever the photo is replaced
     val videoUrl: String? = null,         // optional link to a platform video
-    val qa: String? = null                // optional questions and answers (plain text)
+    val qa: String? = null,               // optional questions and answers (plain text)
+    val proofCount: Int = 0,              // number of certificate pictures (students count only the verified ones)
+    val proofAchievements: Int = 0,       // verified documents per category
+    val proofLeadership: Int = 0,
+    val proofCommunity: Int = 0,
+    val missingProof: List<String>? = null  // administrators only: written claims with no verified document yet
 )
 data class CandidateReq(
     val fullName: String, val program: String, val position: String, val manifesto: String,
@@ -205,6 +211,10 @@ data class DeletedRes(val deleted: Int)
 data class ResetRes(val votesRemoved: Int, val status: String)
 data class DemoReq(val count: Int)
 data class DemoRes(val added: Int)
+/** A picture of a certificate that backs up a candidate's achievements, leadership or community claim. */
+data class ProofDto(val id: Int, val candidateId: Int, val category: String, val caption: String, val status: String, val createdAt: String? = null,
+                    val issuer: String = "", val issuedOn: String = "", val verifiedAt: String? = null, val verifiedBy: String? = null)
+data class ProofPatchReq(val status: String? = null, val caption: String? = null, val issuer: String? = null, val issuedOn: String? = null)
 data class ScheduleReq(val minutes: Int?)
 data class CredentialsReq(val program: String?)
 data class CredRow(val studentNumber: String, val fullName: String, val program: String, val respondentCode: String?, val password: String)
@@ -245,6 +255,12 @@ interface VoteraApi {
     @GET("admin/export/votes.csv") suspend fun exportVotesCsv(): ResponseBody
     @POST("admin/election/reset") suspend fun resetElection(): ResetRes
     @POST("admin/demo/fill") suspend fun demoFill(@Body b: DemoReq): DemoRes
+    @GET("candidates/{id}/proofs") suspend fun listProofs(@Path("id") id: Int): List<ProofDto>
+    @GET("proofs/{id}/image") suspend fun proofImage(@Path("id") id: Int): ResponseBody
+    @POST("admin/candidates/{id}/proofs") suspend fun uploadProof(@Path("id") id: Int, @Query("category") category: String, @Query("caption") caption: String,
+        @Query("issuer") issuer: String, @Query("issued_on") issuedOn: String, @Body body: RequestBody): ProofDto
+    @PATCH("admin/proofs/{id}") suspend fun patchProof(@Path("id") id: Int, @Body body: ProofPatchReq): ProofDto
+    @DELETE("admin/proofs/{id}") suspend fun deleteProof(@Path("id") id: Int): MsgRes
     @POST("admin/demo/candidates") suspend fun demoCandidates(@retrofit2.http.Query("names_only") namesOnly: Boolean = false): DemoRes
     @GET("announcements") suspend fun announcements(): List<AnnouncementDto>
     @POST("announcements") suspend fun postAnnouncement(@Body b: AnnouncementReq): AnnouncementDto
