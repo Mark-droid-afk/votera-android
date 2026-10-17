@@ -296,6 +296,9 @@ fun AdminCandidates(vm: AppVM) {
                         if (c.mostSimilarName != null) Text(
                             "Most similar to: ${c.mostSimilarName} (${fmt((c.highestSimilarity ?: 0.0) * 100)}%)" + if (c.flagged) "  |  flagged" else "",
                             fontSize = 12.sp, color = if (c.flagged) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Documents on file: achievements ${c.proofAchievements}, leadership ${c.proofLeadership}, community ${c.proofCommunity}",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (!c.missingProof.isNullOrEmpty()) Text("No proof yet for: " + c.missingProof.joinToString(", "), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             val kb = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                             OutlinedTextField(a, { a = it }, label = { Text("Ach.", maxLines = 1) }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
@@ -319,10 +322,10 @@ fun AdminCandidates(vm: AppVM) {
         }
     }
 
-    if (adding) CandidateEditor(null, onDismiss = { adding = false }, onRemovePhoto = {}) { req, photo -> vm.addCandidate(req, photo); adding = false }
+    if (adding) CandidateEditor(null, onDismiss = { adding = false }, onRemovePhoto = {}) { req, photo, proofs -> vm.addCandidate(req, photo, proofs); adding = false }
     editing?.let { c ->
-        CandidateEditor(c, onDismiss = { editing = null }, onRemovePhoto = { vm.removePhoto(c.id); editing = null }) { req, photo ->
-            vm.editCandidate(c.id, req, photo); editing = null
+        CandidateEditor(c, onDismiss = { editing = null }, onRemovePhoto = { vm.removePhoto(c.id); editing = null }) { req, photo, proofs ->
+            vm.editCandidate(c.id, req, photo, proofs); editing = null
         }
     }
     deleting?.let { c ->
@@ -338,7 +341,8 @@ fun AdminCandidates(vm: AppVM) {
 
 /** Add or edit a candidate. Saving recomputes TF-IDF similarity for every candidate, because one manifesto changes the reference set. */
 @Composable
-fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto: () -> Unit, onSave: (CandidateReq, ByteArray?) -> Unit) {
+fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto: () -> Unit, onSave: (CandidateReq, ByteArray?, List<ProofDraft>) -> Unit) {
+    val proofDrafts = remember { mutableStateListOf<ProofDraft>() }
     var name by remember { mutableStateOf(initial?.fullName ?: "") }
     var program by remember { mutableStateOf(initial?.program ?: "") }
     val initPos = initial?.position?.let { findPosition(it)?.name ?: it } ?: ""
@@ -412,7 +416,10 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(qa, { qa = it.take(1500) }, label = { Text("Questions and answers (optional)") }, minLines = 2,
                     supportingText = { Text("${qa.length}/1500. Example: Q: Why are you running? A: To ...") }, modifier = Modifier.fillMaxWidth())
+                ProofSection(initial?.id, proofDrafts) { error = it }
                 Text("Scores 0 to 100 (optional now, can be entered later)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (initial != null) Text("Documents on file: achievements ${initial.proofAchievements}, leadership ${initial.proofLeadership}, community ${initial.proofCommunity}",
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val kb = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                     OutlinedTextField(sa, { sa = it }, label = { Text("Ach.") }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
@@ -434,7 +441,7 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
                     position.isBlank() -> error = "Choose a position, or pick Other and type one"
                     bad -> error = "Scores must be numbers from 0 to 100"
                     else -> onSave(CandidateReq(name.trim(), program.trim(), position.trim(), manifesto.trim(), ach.trim(), lead.trim(), comm.trim(),
-                        score(sa), score(sl), score(sc), normalizeUrl(video), qa.trim().ifBlank { null }), photoBytes)
+                        score(sa), score(sl), score(sc), normalizeUrl(video), qa.trim().ifBlank { null }), photoBytes, proofDrafts.toList())
                 }
             }) { Text("Save") }
         },
