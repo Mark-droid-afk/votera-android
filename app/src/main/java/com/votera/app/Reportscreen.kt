@@ -18,6 +18,17 @@ import androidx.compose.ui.unit.sp
 // Everything here comes from data the system already recorded. Nothing is estimated or added.
 
 @Composable
+private fun Row4(a: String, b: String, c: String, d: String, bold: Boolean = false) {
+    val w = if (bold) FontWeight.Bold else FontWeight.Normal
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(a, Modifier.weight(3f), fontSize = 13.sp, fontWeight = w)
+        Text(b, Modifier.weight(1f), fontSize = 13.sp, fontWeight = w)
+        Text(c, Modifier.weight(1f), fontSize = 13.sp, fontWeight = w)
+        Text(d, Modifier.weight(1f), fontSize = 13.sp, fontWeight = w)
+    }
+}
+
+@Composable
 private fun Row3(a: String, b: String, c: String, bold: Boolean = false, wa: Float = 3f) {
     val w = if (bold) FontWeight.Bold else FontWeight.Normal
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
@@ -68,7 +79,7 @@ fun buildReportText(vm: AppVM): String {
     sb.appendLine("Credibility scores (originality 35%, achievements 30%, leadership 20%, community 15%)")
     vm.candidates.forEach {
         sb.appendLine("${it.fullName}: originality ${fmt(it.originalityScore)}, achievements ${fmt(it.achievementsScore)}, leadership ${fmt(it.leadershipScore)}, " +
-            "community ${fmt(it.communityScore)}, credibility ${fmt(it.credibilityScore)}" + if (it.flagged) " [flagged for review]" else "")
+            "community ${fmt(it.communityScore)}, credibility ${fmt(it.credibilityScore)}, proof documents on file ${it.proofCount}" + if (it.flagged) " [flagged for review]" else "")
     }
     sb.appendLine()
     sb.appendLine("Method: TF-IDF with cosine similarity; originality = 100 minus highest similarity x 100; manifestos at 0.70 or higher are flagged for administrator review.")
@@ -129,12 +140,12 @@ fun AdminReport(vm: AppVM) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Credibility scores", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                Row3("Candidate", "Orig.", "Cred.", bold = true)
+                Row4("Candidate", "Orig.", "Docs", "Cred.", bold = true)
                 HorizontalDivider()
-                vm.candidates.forEach { Row3(it.fullName + if (it.flagged) " (flagged)" else "", fmt(it.originalityScore), fmt(it.credibilityScore)) }
+                vm.candidates.forEach { Row4(it.fullName + if (it.flagged) " (flagged)" else "", fmt(it.originalityScore), "${it.proofCount}", fmt(it.credibilityScore)) }
                 Spacer(Modifier.height(6.dp))
                 Text("Credibility = originality x 35% + achievements x 30% + leadership x 20% + community x 15%. " +
-                    "Originality = 100 minus the highest cosine similarity x 100. A manifesto at 0.70 or higher is flagged for administrator review, which is not a rejection.",
+                    "Docs = certificate pictures on file. Originality = 100 minus the highest cosine similarity x 100. A manifesto at 0.70 or higher is flagged for administrator review, which is not a rejection.",
                     fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
