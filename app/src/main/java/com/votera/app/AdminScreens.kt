@@ -119,7 +119,7 @@ fun AdminOverview(vm: AppVM) {
                         fontSize = 13.sp)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                         listOf(30 to "30 min", 60 to "1 hour", 180 to "3 hours", 1440 to "1 day").forEach { (m, label) ->
-                            FilterChip(selected = false, onClick = { vm.setSchedule(m) }, label = { Text(label) }, enabled = !vm.busy)
+                            FilterChip(selected = false, onClick = { vm.setSchedule(m) }, label = { Text(label) }, enabled = !vm.locked)
                         }
                         if (vm.deadline != null) AssistChip(onClick = { vm.setSchedule(null) }, label = { Text("Clear") })
                     }
@@ -176,7 +176,7 @@ fun AdminOverview(vm: AppVM) {
                             val send = Intent(Intent.ACTION_SEND).apply { type = "text/csv"; putExtra(Intent.EXTRA_SUBJECT, "votera_votes.csv"); putExtra(Intent.EXTRA_TEXT, text) }
                             ctx.startActivity(Intent.createChooser(send, "Export vote list (CSV)"))
                         }
-                    }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
+                    }, enabled = !vm.locked, modifier = Modifier.fillMaxWidth()) {
                         Icon(VIcons.Download, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Export vote list (CSV)")
                     }
                     OutlinedButton(onClick = {
@@ -184,20 +184,20 @@ fun AdminOverview(vm: AppVM) {
                             val send = Intent(Intent.ACTION_SEND).apply { type = "application/json"; putExtra(Intent.EXTRA_SUBJECT, "votera_backup.json"); putExtra(Intent.EXTRA_TEXT, text) }
                             ctx.startActivity(Intent.createChooser(send, "Share backup (JSON)"))
                         }
-                    }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
+                    }, enabled = !vm.locked, modifier = Modifier.fillMaxWidth()) {
                         Icon(VIcons.Download, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Backup everything (JSON)")
                     }
-                    OutlinedButton(onClick = { confirmDemo = true }, enabled = !vm.busy && vm.election?.status == "open", modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { confirmDemo = true }, enabled = !vm.locked && vm.election?.status == "open", modifier = Modifier.fillMaxWidth()) {
                         Text("Demo mode: add 20 sample votes")
                     }
                     Text("Demo mode votes for accounts that have not voted, so the live charts can be shown. Reset the election afterwards.",
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedButton(onClick = { confirmCreds = true }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { confirmCreds = true }, enabled = !vm.locked, modifier = Modifier.fillMaxWidth()) {
                         Text("Create credentials sheet (new passwords)")
                     }
                     Text("Gives every student a new random password and a sheet you can print or send. It replaces the old passwords.",
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(onClick = { confirmReset = true }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth(),
+                    Button(onClick = { confirmReset = true }, enabled = !vm.locked, modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError)) {
                         Text("Reset election")
                     }
@@ -272,7 +272,7 @@ fun AdminCandidates(vm: AppVM) {
                     }
                     Button(onClick = { adding = true }) { Icon(VIcons.Add, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Add") }
                 }
-                OutlinedButton(onClick = { vm.demoCandidates() }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                OutlinedButton(onClick = { vm.demoCandidates() }, enabled = !vm.locked, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                     Text("Add sample candidates for every position")
                 }
             }
@@ -301,9 +301,9 @@ fun AdminCandidates(vm: AppVM) {
                         if (!c.missingProof.isNullOrEmpty()) Text("No proof yet for: " + c.missingProof.joinToString(", "), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             val kb = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                            OutlinedTextField(a, { a = it }, label = { Text("Ach.", maxLines = 1) }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
-                            OutlinedTextField(l, { l = it }, label = { Text("Lead.", maxLines = 1) }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
-                            OutlinedTextField(m, { m = it }, label = { Text("Comm.", maxLines = 1) }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
+                            OutlinedTextField(a, { a = it }, label = { Text("Ach.", maxLines = 1) }, singleLine = true, keyboardOptions = kb, enabled = vm.canEdit, modifier = Modifier.weight(1f))
+                            OutlinedTextField(l, { l = it }, label = { Text("Lead.", maxLines = 1) }, singleLine = true, keyboardOptions = kb, enabled = vm.canEdit, modifier = Modifier.weight(1f))
+                            OutlinedTextField(m, { m = it }, label = { Text("Comm.", maxLines = 1) }, singleLine = true, keyboardOptions = kb, enabled = vm.canEdit, modifier = Modifier.weight(1f))
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Button(onClick = {
@@ -311,7 +311,7 @@ fun AdminCandidates(vm: AppVM) {
                                 if (x == null || y == null || z == null || listOf(x, y, z).any { it < 0 || it > 100 })
                                     vm.message = "Scores must be numbers from 0 to 100"
                                 else vm.saveScores(c.id, x, y, z)
-                            }, enabled = !vm.busy) { Text("Save scores") }
+                            }, enabled = !vm.locked) { Text("Save scores") }
                             Spacer(Modifier.weight(1f))
                             IconButton(onClick = { editing = c }) { Icon(VIcons.Edit, contentDescription = "Edit candidate") }
                             IconButton(onClick = { deleting = c }) { Icon(VIcons.Delete, contentDescription = "Delete candidate", tint = MaterialTheme.colorScheme.error) }
@@ -322,9 +322,9 @@ fun AdminCandidates(vm: AppVM) {
         }
     }
 
-    if (adding) CandidateEditor(null, onDismiss = { adding = false }, onRemovePhoto = {}) { req, photo, proofs -> vm.addCandidate(req, photo, proofs); adding = false }
+    if (adding) CandidateEditor(null, vm.canEdit, onDismiss = { adding = false }, onRemovePhoto = {}) { req, photo, proofs -> vm.addCandidate(req, photo, proofs); adding = false }
     editing?.let { c ->
-        CandidateEditor(c, onDismiss = { editing = null }, onRemovePhoto = { vm.removePhoto(c.id); editing = null }) { req, photo, proofs ->
+        CandidateEditor(c, vm.canEdit, onDismiss = { editing = null }, onRemovePhoto = { vm.removePhoto(c.id); editing = null }) { req, photo, proofs ->
             vm.editCandidate(c.id, req, photo, proofs); editing = null
         }
     }
@@ -333,7 +333,7 @@ fun AdminCandidates(vm: AppVM) {
             onDismissRequest = { deleting = null },
             title = { Text("Remove ${c.fullName}?") },
             text = { Text("The candidate is removed and similarity scores are recalculated for the rest. A candidate who already has votes cannot be removed until the election is reset.") },
-            confirmButton = { TextButton(onClick = { vm.deleteCandidate(c.id); deleting = null }) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
+            confirmButton = { TextButton(onClick = { vm.deleteCandidate(c.id); deleting = null }, enabled = vm.canEdit) { Text("Remove", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } }
         )
     }
@@ -341,7 +341,7 @@ fun AdminCandidates(vm: AppVM) {
 
 /** Add or edit a candidate. Saving recomputes TF-IDF similarity for every candidate, because one manifesto changes the reference set. */
 @Composable
-fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto: () -> Unit, onSave: (CandidateReq, ByteArray?, List<ProofDraft>) -> Unit) {
+fun CandidateEditor(initial: CandidateDto?, canSave: Boolean, onDismiss: () -> Unit, onRemovePhoto: () -> Unit, onSave: (CandidateReq, ByteArray?, List<ProofDraft>) -> Unit) {
     val proofDrafts = remember { mutableStateListOf<ProofDraft>() }
     var name by remember { mutableStateOf(initial?.fullName ?: "") }
     var program by remember { mutableStateOf(initial?.program ?: "") }
@@ -381,13 +381,13 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
                     else if (initial != null) CandidateAvatar(initial, 72.dp)
                     else Avatar(name.ifBlank { "?" }, 1, 72.dp)
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        OutlinedButton(onClick = { picker.launch("image/*") }) { Text(if (preview != null || (initial?.photoVersion ?: 0) > 0) "Change photo" else "Choose photo") }
-                        if (initial != null && initial.photoVersion > 0 && preview == null) TextButton(onClick = { confirmPhoto = true }) { Text("Remove photo") }
+                        OutlinedButton(onClick = { picker.launch("image/*") }, enabled = canSave) { Text(if (preview != null || (initial?.photoVersion ?: 0) > 0) "Change photo" else "Choose photo") }
+                        if (initial != null && initial.photoVersion > 0 && preview == null) TextButton(onClick = { confirmPhoto = true }, enabled = canSave) { Text("Remove photo") }
                         Text("Square photos look best.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                OutlinedTextField(name, { name = cleanText(it, 60) }, label = { Text("Full name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(program, { program = cleanText(it, 40) }, label = { Text("Program") }, supportingText = { Text("${program.length}/40") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(name, { name = cleanText(it, 60) }, label = { Text("Full name") }, singleLine = true, enabled = canSave, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(program, { program = cleanText(it, 40) }, label = { Text("Program") }, supportingText = { Text("${program.length}/40") }, singleLine = true, enabled = canSave, modifier = Modifier.fillMaxWidth())
                 ExposedDropdownMenuBox(expanded = posMenu, onExpandedChange = { posMenu = it }) {
                     OutlinedTextField(
                         value = if (customPos) "Other (type your own)" else position.ifBlank { "" },
@@ -405,29 +405,30 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
                     }
                 }
                 if (customPos) OutlinedTextField(position, { position = cleanText(it, 60) }, label = { Text("Custom position name") },
-                    supportingText = { Text("${position.length}/60. Example: Sports Councilor") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    supportingText = { Text("${position.length}/60. Example: Sports Councilor") }, singleLine = true, enabled = canSave, modifier = Modifier.fillMaxWidth())
                 else findPosition(position)?.let { Text(it.duty, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 4,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
-                OutlinedTextField(manifesto, { manifesto = it.take(2000) }, label = { Text("Manifesto") }, supportingText = { Text("${manifesto.length}/2000") }, minLines = 3, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(ach, { ach = it.take(600) }, label = { Text("Verified achievements") }, supportingText = { Text("${ach.length}/600") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(lead, { lead = it.take(600) }, label = { Text("Leadership experience") }, supportingText = { Text("${lead.length}/600") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(comm, { comm = it.take(600) }, label = { Text("Community involvement") }, supportingText = { Text("${comm.length}/600") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(manifesto, { manifesto = it.take(2000) }, label = { Text("Manifesto") }, supportingText = { Text("${manifesto.length}/2000") }, minLines = 3, enabled = canSave, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(ach, { ach = it.take(600) }, label = { Text("Verified achievements") }, supportingText = { Text("${ach.length}/600") }, enabled = canSave, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(lead, { lead = it.take(600) }, label = { Text("Leadership experience") }, supportingText = { Text("${lead.length}/600") }, enabled = canSave, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(comm, { comm = it.take(600) }, label = { Text("Community involvement") }, supportingText = { Text("${comm.length}/600") }, enabled = canSave, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(video, { video = it.trim().take(300) }, label = { Text("Platform video link (optional)") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), enabled = canSave, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(qa, { qa = it.take(1500) }, label = { Text("Questions and answers (optional)") }, minLines = 2,
-                    supportingText = { Text("${qa.length}/1500. Example: Q: Why are you running? A: To ...") }, modifier = Modifier.fillMaxWidth())
-                ProofSection(initial?.id, proofDrafts) { error = it }
+                    supportingText = { Text("${qa.length}/1500. Example: Q: Why are you running? A: To ...") }, enabled = canSave, modifier = Modifier.fillMaxWidth())
+                ProofSection(initial?.id, proofDrafts, canSave) { error = it }
                 Text("Scores 0 to 100 (optional now, can be entered later)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (initial != null) Text("Documents on file: achievements ${initial.proofAchievements}, leadership ${initial.proofLeadership}, community ${initial.proofCommunity}",
                     fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val kb = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                    OutlinedTextField(sa, { sa = it }, label = { Text("Ach.") }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
-                    OutlinedTextField(sl, { sl = it }, label = { Text("Lead.") }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
-                    OutlinedTextField(sc, { sc = it }, label = { Text("Comm.") }, singleLine = true, keyboardOptions = kb, modifier = Modifier.weight(1f))
+                    OutlinedTextField(sa, { sa = it }, label = { Text("Ach.") }, singleLine = true, keyboardOptions = kb, enabled = canSave, modifier = Modifier.weight(1f))
+                    OutlinedTextField(sl, { sl = it }, label = { Text("Lead.") }, singleLine = true, keyboardOptions = kb, enabled = canSave, modifier = Modifier.weight(1f))
+                    OutlinedTextField(sc, { sc = it }, label = { Text("Comm.") }, singleLine = true, keyboardOptions = kb, enabled = canSave, modifier = Modifier.weight(1f))
                 }
                 Text("Saving recalculates TF-IDF similarity and credibility for every candidate.", fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!canSave) Text("No connection. Saving is paused until the connection returns.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
             }
         },
@@ -443,7 +444,7 @@ fun CandidateEditor(initial: CandidateDto?, onDismiss: () -> Unit, onRemovePhoto
                     else -> onSave(CandidateReq(name.trim(), program.trim(), position.trim(), manifesto.trim(), ach.trim(), lead.trim(), comm.trim(),
                         score(sa), score(sl), score(sc), normalizeUrl(video), qa.trim().ifBlank { null }), photoBytes, proofDrafts.toList())
                 }
-            }) { Text("Save") }
+            }, enabled = canSave) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -599,7 +600,7 @@ fun VoterImportDialog(vm: AppVM, onDismiss: () -> Unit) {
                 problem?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
             }
         },
-        confirmButton = { Button(onClick = { picker.launch("*/*") }, enabled = !vm.busy) { Text("Choose CSV file") } },
+        confirmButton = { Button(onClick = { picker.launch("*/*") }, enabled = !vm.locked) { Text("Choose CSV file") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
@@ -658,7 +659,7 @@ fun AddOneVoterDialog(vm: AppVM, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(enabled = snOk && name.isNotBlank() && !vm.busy, onClick = {
+            TextButton(enabled = snOk && name.isNotBlank() && !vm.locked, onClick = {
                 vm.importVoters(SHEET_COLUMNS + "\n" + listOf(sn.trim(), name.trim(), program, pw.trim()).joinToString(",") { cell(it) })
                 onDismiss()
             }) { Text("Add") }
