@@ -88,6 +88,21 @@ import retrofit2.HttpException
 import java.io.IOException
 
 // ---------------- State and calls to the backend ----------------
+/** Whether the phone has a network connection right now. Editing is switched off while it does not, because every change is saved on the server. */
+object NetState {
+    var online by mutableStateOf(true)
+    fun init(ctx: android.content.Context) {
+        try {
+            val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+            online = cm.activeNetwork?.let { cm.getNetworkCapabilities(it)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true } ?: false
+            cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) { online = true }
+                override fun onLost(network: android.net.Network) { online = false }
+            })
+        } catch (e: Exception) { }
+    }
+}
+
 class AppVM : ViewModel() {
     var stage by mutableStateOf("login")  // login -> otp -> main
     var user by mutableStateOf<UserDto?>(null)
@@ -137,6 +152,10 @@ class AppVM : ViewModel() {
     var receiptName by mutableStateOf<String?>(null)
     var loaded by mutableStateOf(false)               // true after the first full load, so lists show placeholders instead of "empty" while loading
     var offline by mutableStateOf(false)              // last background refresh could not reach the server
+    /** False while the phone has no connection or the server cannot be reached: saving, voting and other changes are switched off. */
+    val canEdit: Boolean get() = !offline && NetState.online
+    /** Buttons that send something to the server are enabled only when this is false (a request is running, or there is no connection). */
+    val locked: Boolean get() = busy || !canEdit
     var banner by mutableStateOf<AnnouncementDto?>(null)  // a new announcement that just arrived (students)
     var showWelcome by mutableStateOf(!Prefs.welcomeSeen)  // welcome tour, shown on first launch and from the help center
     var showHelp by mutableStateOf(false)             // help center: FAQ, how the score works, privacy
@@ -543,6 +562,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         ServerConfig.init(applicationContext)  // loads the saved server address, if any
         Prefs.init(applicationContext)         // loads theme, text size and the other settings
+        NetState.init(applicationContext)      // watches the phone's connection so editing can be switched off offline
         window.statusBarColor = MAROON.toArgb()
         WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = false
         setContent { VoteraApp() }
@@ -861,8 +881,8 @@ fun AppShell(vm: AppVM) {
                 }
             }
             Column(Modifier.align(Alignment.TopCenter)) {
-                AnimatedVisibility(visible = vm.stage == "main" && vm.offline) {
-                    InfoBanner("No connection", "Showing the last information loaded. It updates again when the connection returns.", null, {}, null, warn = true)
+                AnimatedVisibility(visible = vm.stage == "main" && !vm.canEdit) {
+                    InfoBanner("No connection", "Showing the last information loaded. Saving, voting and other changes are paused until the connection returns.", null, {}, null, warn = true)
                 }
                 val b = vm.banner
                 AnimatedVisibility(visible = vm.stage == "main" && b != null) {
@@ -954,16 +974,9 @@ fun LoginScreen(vm: AppVM) {
         if (serverVisible) Card(Modifier.padding(top = 12.dp)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if (vm.needServer) "VotEra cannot reach the election server." else "Connection", fontWeight = FontWeight.Bold)
-                Text("Ask your administrator for the server address and enter it here. This is only needed once.", fontSize = 12.sp,
+                Text("The server address is fixed for this app and cannot be changed here. Check your internet connection and try again in a moment.", fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(server, { server = it }, label = { Text("Server address") }, singleLine = true, modifier = Modifier.weight(1f))
-                    Button(onClick = {
-                        val n = ServerConfig.normalize(server)
-                        if (n == null) vm.message = "That server address is not valid"
-                        else { ServerConfig.save(n); server = n; vm.needServer = false; vm.message = "Server address saved. Try logging in again." }
-                    }) { Text("Save") }
-                }
+                OutlinedTextField(server, { }, label = { Text("Server address") }, singleLine = true, enabled = false, readOnly = true, modifier = Modifier.fillMaxWidth())
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -1534,7 +1547,7 @@ private fun ReviewBallotSheet(vm: AppVM, onChange: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(onClick = onChange, modifier = Modifier.weight(1f)) { Text("Go back", maxLines = 1) }
-                Button(onClick = { vm.submitBallot() }, enabled = count > 0 && !vm.busy, modifier = Modifier.weight(1f)) {
+                Button(onClick = { vm.submitBallot() }, enabled = count > 0 && !vm.locked, modifier = Modifier.weight(1f)) {
                     Text(if (count == 1) "Submit 1 vote" else "Submit $count votes", maxLines = 1)
                 }
             }
