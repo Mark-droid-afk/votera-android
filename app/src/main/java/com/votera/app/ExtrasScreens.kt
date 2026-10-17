@@ -573,7 +573,7 @@ fun HelpCenter(onBack: () -> Unit, onTour: () -> Unit) {
 
                 Spacer(Modifier.height(6.dp))
                 Text("Your privacy", style = MaterialTheme.typography.titleMedium)
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), modifier = Modifier.fillMaxWidth()) {
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("Data Privacy Act of 2012 (R.A. 10173)", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Text("Taking part is voluntary. Personal and academic information is handled with strict confidentiality and results are reported in aggregate. " +
