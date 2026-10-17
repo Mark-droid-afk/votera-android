@@ -91,7 +91,7 @@ fun AdminReport(vm: AppVM) {
 
         if (res == null) Empty("No results yet.")
         else {
-            Card {
+            Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(ellipsize(res.election.title, 40), maxLines = 1, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -100,12 +100,12 @@ fun AdminReport(vm: AppVM) {
                     Text("${res.turnout.votesCast} of ${res.turnout.eligibleVoters} eligible voters voted (${fmt(res.turnout.turnoutPercent)}%)")
                 }
             }
-            Card {
+            Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Final ranking per position", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                     resultGroups(res.results).forEach { (pos, rows) ->
                         Spacer(Modifier.height(8.dp))
-                        Text(ellipsize(pos, 40), fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                        Text(pos, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 2)
                         Row3("Candidate", "Votes", "Share", bold = true)
                         HorizontalDivider()
                         rows.forEach { Row3(ellipsize("${it.rank}. ${it.fullName}", 24), "${it.votes}", "${fmt(it.percent)}%", bold = it.rank == 1 && it.votes > 0) }
@@ -117,7 +117,7 @@ fun AdminReport(vm: AppVM) {
                 }
             }
         }
-        Card {
+        Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Turnout per program", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                 Row3("Program", "Voted", "Rate", bold = true, wa = 3f)
@@ -126,7 +126,7 @@ fun AdminReport(vm: AppVM) {
                 vm.turnoutRows.forEach { Row3(ellipsize(it.program, 22), "${it.voted}/${it.eligible}", "${fmt(it.percent)}%") }
             }
         }
-        Card {
+        Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Credibility scores", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                 Row3("Candidate", "Orig.", "Cred.", bold = true)
