@@ -158,6 +158,11 @@ class AppVM : ViewModel() {
     var deadline by mutableStateOf<Long?>(null)      // when voting closes automatically, on this phone's clock (elapsedRealtime)
     var credentials by mutableStateOf<CredentialsRes?>(null)
     var importResult by mutableStateOf<ImportRes?>(null)
+    var voterProfile by mutableStateOf<VoterProfileDto?>(null)
+    var newPassword by mutableStateOf<NewPasswordDto?>(null)
+    var sessions by mutableStateOf<List<SessionDto>>(emptyList())
+    var sessionsMinutes by mutableStateOf(15)
+    var showPreview by mutableStateOf(false)
     var needServer by mutableStateOf(false)  // set when login cannot reach the server, so the login screen offers the address field
     var receiptName by mutableStateOf<String?>(null)
     var loaded by mutableStateOf(false)               // true after the first full load, so lists show placeholders instead of "empty" while loading
@@ -395,7 +400,7 @@ class AppVM : ViewModel() {
         Session.token = null
         user = null; election = null; candidates = emptyList(); announcements = emptyList()
         results = null; voteStatus = null; flagged = emptyList(); otpToken = ""; devOtp = ""
-        votes = emptyList(); voters = emptyList(); turnoutRows = emptyList()
+        votes = emptyList(); voters = emptyList(); turnoutRows = emptyList(); voterProfile = null; newPassword = null; sessions = emptyList(); showPreview = false
         showReceipt = false; receiptName = null; showTutorial = false; importResult = null; credentials = null; deadline = null; candidateQuery = ""; candidateSort = "default"; updatesCategory = "All"; updatesQuery = ""; comparePicked = emptyList(); adminSub = "overview"
         loaded = false; offline = false; banner = null; knownAnnouncements = null; matchMode = false; priorities = listOf(5f, 5f, 5f, 5f)
         auditLog = emptyList(); auditOnlyProblems = false; selfTest = null; selfTesting = false; candidatesListState = LazyListState()
@@ -418,11 +423,26 @@ class AppVM : ViewModel() {
         loadAll()
         success = "Scores saved" to "The scores were saved and the credibility was recalculated."
     }
-    fun postAnnouncement(title: String, body: String, category: String, pinned: Boolean, image: ByteArray?) = launchTask {
-        val a = Net.api.postAnnouncement(AnnouncementReq(title, body, category, pinned))
+    fun postAnnouncement(title: String, body: String, category: String, pinned: Boolean, image: ByteArray?, publishInMinutes: Int? = null) = launchTask {
+        val a = Net.api.postAnnouncement(AnnouncementReq(title, body, category, pinned, publishInMinutes))
         if (image != null) Net.api.uploadAnnouncementImage(a.id, jpegBody(image))
         announcements = Net.api.announcements()
-        success = "Post published" to "Students can now see it in Updates."
+        success = if (publishInMinutes != null) "Post scheduled" to "Students will see it in Updates in about $publishInMinutes minutes."
+                  else "Post published" to "Students can now see it in Updates."
+    }
+    fun setCandidatePublished(c: CandidateDto, published: Boolean) = launchTask {
+        Net.api.setPublished(c.id, PublishedReq(published))
+        loadAll()
+        message = if (published) "${c.fullName} is now on the student ballot" else "${c.fullName} was moved back to drafts"
+    }
+    fun openVoterProfile(sn: String) = launchTask { voterProfile = Net.api.voterProfile(sn) }
+    fun resetVoterPassword(sn: String) = launchTask { newPassword = Net.api.resetOnePassword(sn); voterProfile = Net.api.voterProfile(sn) }
+    fun loadSessions() = launchTask { val r = Net.api.sessions(); sessions = r.sessions; sessionsMinutes = r.minutes }
+    fun endSession(sn: String) = launchTask {
+        Net.api.endSession(sn)
+        val r = Net.api.sessions(); sessions = r.sessions
+        if (voterProfile?.studentNumber == sn) voterProfile = Net.api.voterProfile(sn)
+        message = "Session ended. That account must sign in again."
     }
     fun setPostPinned(a: AnnouncementDto) = launchTask {
         Net.api.editAnnouncement(a.id, AnnouncementEditReq(pinned = !a.pinned))
@@ -1518,7 +1538,13 @@ private fun BallotBar(vm: AppVM) {
     val left = positions.filter { !it.voted }
     val selected = left.count { vm.picks[posKey(it.position)] != null }
     val next = left.firstOrNull { vm.picks[posKey(it.position)] == null }
+    val done = positions.size - left.size
     Card(Modifier.fillMaxWidth().tourTarget("ballot"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)) {
+            Text("Progress: ${done + selected} of ${positions.size} positions (${done} already submitted)", fontSize = 11.sp, maxLines = 1)
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(progress = { if (positions.isEmpty()) 0f else (done + selected).toFloat() / positions.size }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)))
+        }
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Your ballot", fontWeight = FontWeight.Bold, maxLines = 1)
