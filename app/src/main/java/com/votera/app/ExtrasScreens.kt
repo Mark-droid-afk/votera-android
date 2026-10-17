@@ -280,14 +280,14 @@ fun AdminSelfTest(vm: AppVM) {
         if (vm.selfTesting) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (st != null) {
             val all = st.passed == st.total
-            Card(colors = CardDefaults.cardColors(containerColor = if (all) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer)) {
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (all) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("${st.passed} of ${st.total} checks passed", fontWeight = FontWeight.Bold)
                     Text(if (all) "Every method returned the expected result." else "Some checks failed. See the list below.", fontSize = 12.sp)
                 }
             }
             st.checks.groupBy { it.group }.forEach { (group, list) ->
-                Card {
+                Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(group, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                         list.forEach { c ->
@@ -322,7 +322,7 @@ fun MatchMe(vm: AppVM) {
         Text("Move each slider to show how much that quality matters to you. The list re-orders using your own weights. " +
             "It is only a guide. It does not change the official Credibility Score, and it does not vote for you.", fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Card {
+        Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 labels.forEachIndexed { i, label ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -573,7 +573,7 @@ fun HelpCenter(onBack: () -> Unit, onTour: () -> Unit) {
 
                 Spacer(Modifier.height(6.dp))
                 Text("Your privacy", style = MaterialTheme.typography.titleMedium)
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), modifier = Modifier.fillMaxWidth()) {
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("Data Privacy Act of 2012 (R.A. 10173)", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Text("Taking part is voluntary. Personal and academic information is handled with strict confidentiality and results are reported in aggregate. " +
@@ -781,7 +781,7 @@ fun AdminPosts(vm: AppVM) {
     val shown = visiblePosts(vm)
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Card {
+            Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("New post", style = MaterialTheme.typography.titleMedium)
                     OutlinedTextField(title, { title = cleanText(it, 80) }, label = { Text("Title") }, supportingText = { Text("${title.length}/80") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -857,12 +857,12 @@ fun VerifyReceiptDialog(vm: AppVM, onDismiss: () -> Unit) {
                     textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 12.sp), modifier = Modifier.fillMaxWidth())
                 TextButton(onClick = { clip.getText()?.text?.let { tx = it.trim().take(64); res = null } }) { Text("Paste from clipboard") }
                 res?.let { r ->
-                    Card(colors = CardDefaults.cardColors(containerColor = if (r.valid) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer)) {
+                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (r.valid) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer)) {
                         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(if (r.valid) "Recorded" else "Not found", fontWeight = FontWeight.Bold)
                             Text(r.message, fontSize = 13.sp)
                             if (r.valid) {
-                                if (!r.position.isNullOrBlank()) Text("Position: ${ellipsize(r.position, 40)}", fontSize = 13.sp)
+                                if (!r.position.isNullOrBlank()) Text("Position: ${r.position}", fontSize = 13.sp)
                                 r.castAt?.let { Text("Time: ${it.replace("T", " ").take(16)} UTC", fontSize = 13.sp) }
                                 if (r.yours && !r.candidateName.isNullOrBlank()) Text("Your vote: ${ellipsize(r.candidateName, 30)}", fontSize = 13.sp, fontWeight = FontWeight.Medium)
                                 else Text("This receipt belongs to another voter, so the choice is hidden.", fontSize = 12.sp)
@@ -960,7 +960,7 @@ fun AdminInsights(vm: AppVM) {
     val groups = groupByPosition(cands)
     val res = vm.results
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Card {
+        Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Election checklist", style = MaterialTheme.typography.titleMedium)
                 CheckLine(cands.isNotEmpty(), "Candidates added (${cands.size})")
@@ -976,7 +976,7 @@ fun AdminInsights(vm: AppVM) {
             top > 0 && rows.count { it.votes == top } > 1
         }.map { it.first }
         val single = groups.filter { it.second.size == 1 }.map { it.first }
-        Card {
+        Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Warnings", style = MaterialTheme.typography.titleMedium)
                 if (ties.isEmpty() && single.isEmpty() && vm.flagged.isEmpty()) Text("Nothing needs attention.", fontSize = 13.sp)
@@ -986,7 +986,7 @@ fun AdminInsights(vm: AppVM) {
             }
         }
         val fb = vm.feedbackSummary
-        Card {
+        Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Student feedback", style = MaterialTheme.typography.titleMedium)
                 if (fb == null || fb.count == 0) Text("No feedback yet. Students send it from Settings.", fontSize = 13.sp)
