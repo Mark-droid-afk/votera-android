@@ -966,6 +966,7 @@ fun AdminInsights(vm: AppVM) {
                 CheckLine(cands.isNotEmpty(), "Candidates added (${cands.size})")
                 CheckLine(groups.isNotEmpty() && groups.all { it.second.size >= 2 }, "Every position has at least 2 candidates")
                 CheckLine(cands.isNotEmpty() && cands.all { it.achievementsScore != null && it.leadershipScore != null && it.communityScore != null }, "Scores entered for every candidate")
+                CheckLine(cands.isNotEmpty() && cands.all { it.missingProof.isNullOrEmpty() }, "Every written claim has a verified document")
                 CheckLine(vm.voters.isNotEmpty(), "Voters loaded (${vm.voters.size})")
                 CheckLine(vm.deadline != null || vm.election?.status == "closed", "Closing time set or election closed")
                 CheckLine(vm.election?.status == "open" || vm.election?.status == "closed", "Election opened")
@@ -979,7 +980,10 @@ fun AdminInsights(vm: AppVM) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Warnings", style = MaterialTheme.typography.titleMedium)
-                if (ties.isEmpty() && single.isEmpty() && vm.flagged.isEmpty()) Text("Nothing needs attention.", fontSize = 13.sp)
+                val noProof = cands.filter { !it.missingProof.isNullOrEmpty() }
+                if (ties.isEmpty() && single.isEmpty() && vm.flagged.isEmpty() && noProof.isEmpty()) Text("Nothing needs attention.", fontSize = 13.sp)
+                noProof.take(8).forEach { Text("No proof yet: ${ellipsize(it.fullName, 24)} (${it.missingProof?.joinToString(", ")})", fontSize = 13.sp) }
+                if (noProof.size > 8) Text("and ${noProof.size - 8} more candidates without proof", fontSize = 13.sp)
                 ties.forEach { Text("Tie for first place: ${ellipsize(it, 36)}", fontSize = 13.sp, color = MaterialTheme.colorScheme.error) }
                 single.forEach { Text("Only one candidate: ${ellipsize(it, 36)}", fontSize = 13.sp) }
                 if (vm.flagged.isNotEmpty()) Text("${vm.flagged.size} manifesto${if (vm.flagged.size == 1) "" else "s"} flagged for review (similarity 70% or higher).", fontSize = 13.sp)
@@ -1097,4 +1101,209 @@ fun TourOverlay(tour: TourState, steps: List<TourStep>, onFinish: () -> Unit) {
             }
         }
     }
+}
+
+
+// ---------------- Proof documents: certificate pictures that back up achievements, leadership and community claims ----------------
+/** A picture chosen in the candidate editor, uploaded when the administrator taps Save. */
+class ProofDraft(val category: String, val caption: String, val bytes: ByteArray, val issuer: String = "", val issuedOn: String = "")
+
+val PROOF_CATEGORIES = listOf("achievements" to "Achievements", "leadership" to "Leadership", "community" to "Community")
+fun proofCategoryName(key: String) = PROOF_CATEGORIES.firstOrNull { it.first == key }?.second ?: key
+
+/** Proof pictures are fetched with the login token and kept in memory. A picture never changes once uploaded, so its id is the key. */
+object ProofCache {
+    private val cache = android.util.LruCache<Int, androidx.compose.ui.graphics.ImageBitmap>(40)
+    fun get(id: Int) = cache.get(id)
+    suspend fun load(id: Int): androidx.compose.ui.graphics.ImageBitmap? {
+        get(id)?.let { return it }
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val bytes = Net.api.proofImage(id).bytes()
+                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { androidx.compose.ui.graphics.asImageBitmap(it) }
+                if (bmp != null) cache.put(id, bmp)
+                bmp
+            } catch (t: kotlinx.coroutines.CancellationException) { throw t } catch (t: Exception) { null }
+        }
+    }
+}
+
+/** "2025 | Guidance Office" style line from the issuer and date of a document. */
+fun proofSource(issuer: String, issuedOn: String): String = listOf(issuer.trim(), issuedOn.trim()).filter { it.isNotEmpty() }.joinToString(" | ")
+
+/** "2025-03-14T08:00:00Z" -> "2025-03-14" */
+fun proofDay(iso: String?): String = iso?.take(10) ?: ""
+
+/** Under a claim on the profile: the administrator checked this many documents for it. */
+@Composable
+fun ProofBadge(n: Int) {
+    if (n <= 0) return
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Icon(VIcons.Check, contentDescription = null, tint = GREEN, modifier = Modifier.size(16.dp))
+        Text("Verified by the administrator, $n document${if (n == 1) "" else "s"} on file", fontSize = 12.sp, color = GREEN, fontWeight = FontWeight.Medium)
+    }
+}
+
+/** Small square preview of one proof picture. Tap to open it full size. */
+@Composable
+fun ProofThumb(p: ProofDto, size: androidx.compose.ui.unit.Dp = 88.dp, onClick: () -> Unit) {
+    var bmp by remember(p.id) { mutableStateOf(ProofCache.get(p.id)) }
+    LaunchedEffect(p.id) { if (bmp == null) bmp = ProofCache.load(p.id) }
+    val b = bmp
+    Box(Modifier.size(size).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center) {
+        if (b != null) Image(bitmap = b, contentDescription = p.caption.ifBlank { "Certificate" }, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        else Text("...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** The picture at full size, with its caption. */
+@Composable
+fun ProofViewer(p: ProofDto, onClose: () -> Unit) {
+    var bmp by remember(p.id) { mutableStateOf(ProofCache.get(p.id)) }
+    LaunchedEffect(p.id) { if (bmp == null) bmp = ProofCache.load(p.id) }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(proofCategoryName(p.category) + if (p.status == "rejected") " (hidden from students)" else "") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val b = bmp
+                if (b != null) Image(bitmap = b, contentDescription = p.caption.ifBlank { "Certificate" }, contentScale = ContentScale.FillWidth, modifier = Modifier.fillMaxWidth())
+                else Text("Loading the picture...")
+                if (p.caption.isNotBlank()) Text(p.caption, fontWeight = FontWeight.Medium)
+                val src = proofSource(p.issuer, p.issuedOn)
+                if (src.isNotBlank()) Text("Issued: $src", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (p.status == "verified" && !p.verifiedAt.isNullOrBlank())
+                    Text("Checked by the administrator on ${proofDay(p.verifiedAt)}" + if (!p.verifiedBy.isNullOrBlank()) " (${p.verifiedBy})" else "",
+                        fontSize = 12.sp, color = GREEN)
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("Close") } })
+}
+
+/** Candidate profile: the certificate pictures, grouped by Achievements, Leadership and Community. */
+@Composable
+fun ProofGallery(c: CandidateDto, isAdmin: Boolean) {
+    var proofs by remember(c.id, c.proofCount) { mutableStateOf<List<ProofDto>?>(null) }
+    var open by remember { mutableStateOf<ProofDto?>(null) }
+    LaunchedEffect(c.id, c.proofCount) {
+        try { proofs = Net.api.listProofs(c.id) } catch (t: kotlinx.coroutines.CancellationException) { throw t } catch (t: Exception) { proofs = emptyList() }
+    }
+    val list = proofs ?: emptyList()
+    if (list.isEmpty()) return
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Proof documents", style = MaterialTheme.typography.titleMedium)
+            Text("Pictures of certificates the administrator checked. Tap one to open it.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            PROOF_CATEGORIES.forEach { (key, label) ->
+                val items = list.filter { it.category == key }
+                if (items.isNotEmpty()) {
+                    Text(label + " (${items.size})", fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items.forEach { p ->
+                            Column(Modifier.width(88.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                ProofThumb(p) { open = p }
+                                if (p.caption.isNotBlank()) Text(p.caption, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                val src = proofSource(p.issuer, p.issuedOn)
+                                if (src.isNotBlank()) Text(src, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (isAdmin && p.status == "rejected") Text("Hidden", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    open?.let { ProofViewer(it) { open = null } }
+}
+
+/** Candidate editor: current pictures (hide, show or delete them right away) and new pictures to add (uploaded when Save is tapped). */
+@Composable
+fun ProofSection(candidateId: Int?, drafts: androidx.compose.runtime.snapshots.SnapshotStateList<ProofDraft>, onError: (String?) -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var existing by remember(candidateId) { mutableStateOf<List<ProofDto>>(emptyList()) }
+    var reload by remember { mutableStateOf(0) }
+    var category by remember { mutableStateOf("achievements") }
+    var caption by remember { mutableStateOf("") }
+    var issuer by remember { mutableStateOf("") }
+    var issuedOn by remember { mutableStateOf("") }
+    var viewing by remember { mutableStateOf<ProofDto?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    LaunchedEffect(candidateId, reload) {
+        if (candidateId != null) try { existing = Net.api.listProofs(candidateId) } catch (t: kotlinx.coroutines.CancellationException) { throw t } catch (t: Exception) { }
+    }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            val b = compressPostImage(ctx, uri)
+            if (b == null) onError("That picture could not be read. Try another one.")
+            else {
+                val inCat = existing.count { it.category == category } + drafts.count { it.category == category }
+                if (inCat >= 6) onError("At most 6 documents for each category") else { drafts.add(ProofDraft(category, caption.trim(), b, issuer.trim(), issuedOn.trim())); caption = ""; onError(null) }
+            }
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Proof documents", style = MaterialTheme.typography.titleSmall)
+        Text("Upload a picture of each certificate so the claims above have proof. Up to 6 for each category.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (existing.isNotEmpty()) {
+            Text("Already uploaded", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            existing.forEach { p ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ProofThumb(p, 56.dp) { viewing = p }
+                    Column(Modifier.weight(1f)) {
+                        Text(proofCategoryName(p.category), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text(p.caption.ifBlank { "No caption" }, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val src = proofSource(p.issuer, p.issuedOn)
+                        if (src.isNotBlank()) Text(src, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (p.status == "rejected") Text("Hidden from students", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                    TextButton(enabled = !busy, onClick = {
+                        busy = true
+                        scope.launch {
+                            try { Net.api.patchProof(p.id, ProofPatchReq(status = if (p.status == "rejected") "verified" else "rejected")); reload++ }
+                            catch (t: kotlinx.coroutines.CancellationException) { throw t } catch (t: Exception) { onError("Could not update the document. Check the connection.") }
+                            busy = false
+                        }
+                    }) { Text(if (p.status == "rejected") "Show" else "Hide") }
+                    TextButton(enabled = !busy, onClick = {
+                        busy = true
+                        scope.launch {
+                            try { Net.api.deleteProof(p.id); reload++ }
+                            catch (t: kotlinx.coroutines.CancellationException) { throw t } catch (t: Exception) { onError("Could not delete the document. Check the connection.") }
+                            busy = false
+                        }
+                    }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        }
+        if (drafts.isNotEmpty()) {
+            Text("Will be uploaded when you tap Save", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            drafts.forEachIndexed { i, d ->
+                val bmp = remember(d) { android.graphics.BitmapFactory.decodeByteArray(d.bytes, 0, d.bytes.size)?.let { androidx.compose.ui.graphics.asImageBitmap(it) } }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                        if (bmp != null) Image(bitmap = bmp, contentDescription = "New certificate", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(proofCategoryName(d.category), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text(d.caption.ifBlank { "No caption" }, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val src = proofSource(d.issuer, d.issuedOn)
+                        if (src.isNotBlank()) Text(src, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = { drafts.removeAt(i) }) { Text("Remove") }
+                }
+            }
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PROOF_CATEGORIES.forEach { (key, label) -> FilterChip(selected = category == key, onClick = { category = key }, label = { Text(label) }) }
+        }
+        OutlinedTextField(caption, { caption = cleanText(it, 120) }, label = { Text("Caption (example: Dean's Lister, 2025)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(issuer, { issuer = cleanText(it, 80) }, label = { Text("Issued by") }, singleLine = true, modifier = Modifier.weight(2f))
+            OutlinedTextField(issuedOn, { issuedOn = cleanText(it, 20) }, label = { Text("When") }, placeholder = { Text("2025") }, singleLine = true, modifier = Modifier.weight(1f))
+        }
+        OutlinedButton(onClick = { picker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) { Text("Choose certificate picture") }
+    }
+    viewing?.let { ProofViewer(it) { viewing = null } }
 }
