@@ -272,6 +272,9 @@ fun AdminCandidates(vm: AppVM) {
                     }
                     Button(onClick = { adding = true }) { Icon(VIcons.Add, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Add") }
                 }
+                OutlinedButton(onClick = { vm.demoCandidates() }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Text("Add sample candidates for every position")
+                }
             }
             if (vm.candidates.isEmpty()) item { Empty("No candidates yet. Tap Add.") }
             items(vm.candidates, key = { it.id }) { c ->
