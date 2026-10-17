@@ -1308,3 +1308,32 @@ fun ProofSection(candidateId: Int?, drafts: androidx.compose.runtime.snapshots.S
     }
     viewing?.let { ProofViewer(it) { viewing = null } }
 }
+
+
+// ---------------- Smooth screen motion ----------------
+/** Remembers which items already played their entrance, so a list item scrolled back into view does not animate a second time. */
+object EnterSeen {
+    private val keys = HashSet<String>()
+    fun has(k: String) = k in keys
+    fun add(k: String) { keys.add(k) }
+    fun reset() = keys.clear()
+}
+
+/** Gentle entrance: the item fades in and glides a short way from the side the person is moving toward (dir 1 = from the right, -1 = from the left).
+ *  index staggers neighbours a little. Does nothing when Reduce motion is on. */
+@Composable
+fun Modifier.smoothEnter(key: String, index: Int = 0, dir: Int = 1): Modifier {
+    if (Prefs.reduceMotion) return this
+    var go by remember(key) { mutableStateOf(EnterSeen.has(key)) }
+    LaunchedEffect(key) {
+        if (!go) {
+            kotlinx.coroutines.delay(index.coerceIn(0, 6) * 40L)
+            go = true
+            EnterSeen.add(key)
+        }
+    }
+    val p by androidx.compose.animation.core.animateFloatAsState(
+        if (go) 1f else 0f, tween(340, easing = androidx.compose.animation.core.FastOutSlowInEasing), label = "enter")
+    val dx = with(LocalDensity.current) { 32.dp.toPx() }
+    return this.graphicsLayer { alpha = p; translationX = (1f - p) * dx * dir }
+}
