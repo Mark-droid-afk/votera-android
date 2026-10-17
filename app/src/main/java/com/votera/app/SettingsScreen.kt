@@ -111,14 +111,12 @@ fun SettingsScreen(vm: AppVM) {
         }
 
         Section("Server connection") {
-            Text("Only change this if your administrator gives you a new address.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(server, { server = it }, label = { Text("Server address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Text("The server address is fixed for this app and cannot be changed.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(server, { }, label = { Text("Server address") }, singleLine = true, enabled = false, readOnly = true, modifier = Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = {
-                    val n = ServerConfig.normalize(server)
-                    if (n == null) testResult = "That address is not valid"
-                    else {
-                        ServerConfig.save(n); server = n; testing = true; testResult = "Testing..."
+                    run {
+                        testing = true; testResult = "Testing..."
                         scope.launch {
                             testResult = try {
                                 val h = Net.api.healthDb()
@@ -128,7 +126,7 @@ fun SettingsScreen(vm: AppVM) {
                             testing = false
                         }
                     }
-                }, enabled = !testing) { Text("Save and test connection") }
+                }, enabled = !testing) { Text("Test connection") }
             }
             testResult?.let { Text(it, fontSize = 12.sp) }
         }
