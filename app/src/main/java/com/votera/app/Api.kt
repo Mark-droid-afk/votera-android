@@ -162,19 +162,30 @@ data class CandidateDto(
     val proofAchievements: Int = 0,       // verified documents per category
     val proofLeadership: Int = 0,
     val proofCommunity: Int = 0,
-    val missingProof: List<String>? = null  // administrators only: written claims with no verified document yet
+    val missingProof: List<String>? = null,  // administrators only: written claims with no verified document yet
+    val published: Boolean = true         // false = draft, hidden from students
 )
 data class CandidateReq(
     val fullName: String, val program: String, val position: String, val manifesto: String,
     val achievements: String, val leadership: String, val community: String,
     val achievementsScore: Double?, val leadershipScore: Double?, val communityScore: Double?,
-    val videoUrl: String? = null, val qa: String? = null
+    val videoUrl: String? = null, val qa: String? = null, val published: Boolean? = null
 )
+data class PublishedReq(val published: Boolean)
+data class VoteLineDto(val position: String, val candidateName: String, val transactionId: String, val castAt: String? = null)
+data class VoterProfileDto(val studentNumber: String, val fullName: String, val program: String, val respondentCode: String? = null,
+                           val lastLogin: String? = null, val lastSeen: String? = null, val online: Boolean = false,
+                           val positionsVoted: Int = 0, val positionsTotal: Int = 0, val votes: List<VoteLineDto> = emptyList())
+data class NewPasswordDto(val studentNumber: String, val fullName: String, val password: String)
+data class SessionDto(val studentNumber: String, val fullName: String, val role: String, val program: String, val lastLogin: String? = null, val lastSeen: String? = null)
+data class SessionsRes(val minutes: Int = 15, val sessions: List<SessionDto> = emptyList())
+data class EndedRes(val ended: String)
 data class ScoresReq(val achievementsScore: Double, val leadershipScore: Double, val communityScore: Double)
 data class FlaggedRes(val threshold: Double, val flagged: List<CandidateDto>)
 data class AnnouncementDto(val id: Int, val title: String, val body: String, val createdAt: String,
-                           val category: String = "General", val pinned: Boolean = false, val imageVersion: Int = 0)
-data class AnnouncementReq(val title: String, val body: String, val category: String = "General", val pinned: Boolean = false)
+                           val category: String = "General", val pinned: Boolean = false, val imageVersion: Int = 0,
+                           val publishAt: String? = null, val scheduled: Boolean = false)
+data class AnnouncementReq(val title: String, val body: String, val category: String = "General", val pinned: Boolean = false, val publishInMinutes: Int? = null)
 data class AnnouncementEditReq(val title: String? = null, val body: String? = null, val category: String? = null, val pinned: Boolean? = null)
 /** One line of the ballot: a position and what this student chose for it (null until they vote). */
 data class PositionVoteDto(val position: String, val voted: Boolean, val candidateId: Int? = null, val candidateName: String? = null,
@@ -251,6 +262,11 @@ interface VoteraApi {
     @GET("admin/flagged") suspend fun flagged(): FlaggedRes
     @GET("admin/votes") suspend fun votes(): List<VoteAuditDto>
     @GET("admin/voters") suspend fun voters(): List<VoterDto>
+    @PUT("admin/candidates/{id}/published") suspend fun setPublished(@Path("id") id: Int, @Body b: PublishedReq): CandidateDto
+    @GET("admin/voters/{sn}/profile") suspend fun voterProfile(@Path("sn") sn: String): VoterProfileDto
+    @POST("admin/voters/{sn}/reset-password") suspend fun resetOnePassword(@Path("sn") sn: String): NewPasswordDto
+    @GET("admin/sessions") suspend fun sessions(): SessionsRes
+    @POST("admin/sessions/{sn}/end") suspend fun endSession(@Path("sn") sn: String): EndedRes
     @GET("admin/turnout") suspend fun turnoutByProgram(): List<TurnoutRowDto>
     @GET("admin/export/votes.csv") suspend fun exportVotesCsv(): ResponseBody
     @POST("admin/election/reset") suspend fun resetElection(): ResetRes
