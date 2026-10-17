@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -180,6 +181,9 @@ fun AdminOverview(vm: AppVM) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Tools", style = MaterialTheme.typography.titleMedium)
+                    OutlinedButton(onClick = { vm.showPreview = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Preview the student ballot")
+                    }
                     OutlinedButton(onClick = {
                         vm.exportVotes { text ->
                             val send = Intent(Intent.ACTION_SEND).apply { type = "text/csv"; putExtra(Intent.EXTRA_SUBJECT, "votera_votes.csv"); putExtra(Intent.EXTRA_TEXT, text) }
@@ -255,6 +259,30 @@ fun AdminOverview(vm: AppVM) {
             dismissButton = { TextButton(onClick = { vm.credentials = null }) { Text("Close") } }
         )
     }
+    if (vm.showPreview) {
+        val shown = vm.candidates.filter { it.published }
+        val drafts = vm.candidates.size - shown.size
+        val groups = shown.groupBy { posKey(it.position) }.values.sortedBy { positionRank(it.first().position) }
+        AlertDialog(
+            onDismissRequest = { vm.showPreview = false },
+            title = { Text("Student ballot preview") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("This is what students will be able to choose from. Drafts are not shown.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (drafts > 0) Text("$drafts draft candidate(s) hidden.", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    if (groups.isEmpty()) Text("No published candidates yet.", fontSize = 13.sp)
+                    groups.forEach { g ->
+                        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(10.dp)) {
+                            Text(g.first().position, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2)
+                            g.forEach { c -> Text("- ${ellipsize(c.fullName, 30)}", fontSize = 13.sp, maxLines = 1) }
+                            if (g.size == 1) Text("Only one candidate for this position", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { vm.showPreview = false }) { Text("Close") } }
+        )
+    }
     if (confirmDemo) AlertDialog(
         onDismissRequest = { confirmDemo = false },
         title = { Text("Add sample votes?") },
@@ -297,6 +325,7 @@ fun AdminCandidates(vm: AppVM) {
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(ellipsize(c.fullName, 28), fontWeight = FontWeight.Bold, maxLines = 1)
+                                if (!c.published) Text("DRAFT - hidden from students", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                                 Text(c.position, fontSize = 12.sp, maxLines = 2)
                                 Text(ellipsize(c.program, 28), fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
@@ -322,6 +351,9 @@ fun AdminCandidates(vm: AppVM) {
                                 else vm.saveScores(c.id, x, y, z)
                             }, enabled = !vm.locked) { Text("Save scores") }
                             Spacer(Modifier.weight(1f))
+                            OutlinedButton(onClick = { vm.setCandidatePublished(c, !c.published) }, enabled = !vm.locked, contentPadding = PaddingValues(horizontal = 12.dp)) {
+                                Text(if (c.published) "Make draft" else "Publish", maxLines = 1)
+                            }
                             IconButton(onClick = { editing = c }) { Icon(VIcons.Edit, contentDescription = "Edit candidate") }
                             IconButton(onClick = { deleting = c }) { Icon(VIcons.Delete, contentDescription = "Delete candidate", tint = MaterialTheme.colorScheme.error) }
                         }
@@ -368,6 +400,7 @@ fun CandidateEditor(initial: CandidateDto?, canSave: Boolean, onDismiss: () -> U
     var sl by remember { mutableStateOf(initial?.leadershipScore?.let { fmt(it) } ?: "") }
     var sc by remember { mutableStateOf(initial?.communityScore?.let { fmt(it) } ?: "") }
     var error by remember { mutableStateOf<String?>(null) }
+    var asDraft by remember { mutableStateOf(false) }
     var confirmPhoto by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     var photoBytes by remember { mutableStateOf<ByteArray?>(null) }
@@ -435,6 +468,13 @@ fun CandidateEditor(initial: CandidateDto?, canSave: Boolean, onDismiss: () -> U
                     OutlinedTextField(sl, { sl = it }, label = { Text("Lead.") }, singleLine = true, keyboardOptions = kb, enabled = canSave, modifier = Modifier.weight(1f))
                     OutlinedTextField(sc, { sc = it }, label = { Text("Comm.") }, singleLine = true, keyboardOptions = kb, enabled = canSave, modifier = Modifier.weight(1f))
                 }
+                if (initial == null) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Save as draft", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text("Hidden from students until you publish it.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = asDraft, onCheckedChange = { asDraft = it }, enabled = canSave)
+                }
                 Text("Saving recalculates TF-IDF similarity and credibility for every candidate.", fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (!canSave) Text("No connection. Saving is paused until the connection returns.", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
@@ -451,7 +491,7 @@ fun CandidateEditor(initial: CandidateDto?, canSave: Boolean, onDismiss: () -> U
                     position.isBlank() -> error = "Choose a position, or pick Other and type one"
                     bad -> error = "Scores must be numbers from 0 to 100"
                     else -> onSave(CandidateReq(name.trim(), program.trim(), position.trim(), manifesto.trim(), ach.trim(), lead.trim(), comm.trim(),
-                        score(sa), score(sl), score(sc), normalizeUrl(video), qa.trim().ifBlank { null }), photoBytes, proofDrafts.toList())
+                        score(sa), score(sl), score(sc), normalizeUrl(video), qa.trim().ifBlank { null }, if (initial == null && asDraft) false else null), photoBytes, proofDrafts.toList())
                 }
             }, enabled = canSave) { Text("Save") }
         },
@@ -510,9 +550,12 @@ fun AdminVoters(vm: AppVM) {
     var showAddOne by remember { mutableStateOf(false) }
     var q by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("all") }
+    var programFilter by remember { mutableStateOf("") }
     val voted = vm.voters.count { it.hasVoted }
+    val programs = vm.voters.map { it.program }.distinct().sorted()
     val rows = vm.voters.filter {
         (filter == "all" || (filter == "voted") == it.hasVoted) &&
+            (programFilter.isEmpty() || it.program == programFilter) &&
             (q.isBlank() || it.fullName.contains(q, true) || it.studentNumber.contains(q, true) || it.program.contains(q, true))
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -542,11 +585,19 @@ fun AdminVoters(vm: AppVM) {
                         FilterChip(selected = filter == id, onClick = { filter = id }, label = { Text(label) })
                     }
                 }
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = programFilter.isEmpty(), onClick = { programFilter = "" }, label = { Text("All programs") })
+                    programs.forEach { pr ->
+                        FilterChip(selected = programFilter == pr, onClick = { programFilter = if (programFilter == pr) "" else pr }, label = { Text(pr, maxLines = 1) })
+                    }
+                }
+                Text("Tap a student to see a quick profile", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         if (rows.isEmpty()) item { Empty("No matches.") }
         items(rows, key = { it.studentNumber }) { v ->
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp),
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainer)
+                .clickable(enabled = !vm.busy) { vm.openVoterProfile(v.studentNumber) }.padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Avatar(v.fullName, v.studentNumber.hashCode(), 36.dp)
                 Spacer(Modifier.width(10.dp))
@@ -562,7 +613,87 @@ fun AdminVoters(vm: AppVM) {
 
     if (showImport) VoterImportDialog(vm, onDismiss = { showImport = false })
     if (showAddOne) AddOneVoterDialog(vm, onDismiss = { showAddOne = false })
+    vm.voterProfile?.let { VoterProfileDialog(vm, it) }
+    vm.newPassword?.let { np -> NewPasswordDialog(np, onDismiss = { vm.newPassword = null }) }
     vm.importResult?.let { r -> ImportResultDialog(r, onDismiss = { vm.importResult = null }) }
+}
+
+// ----- Quick profile of one student -----
+@Composable
+fun VoterProfileDialog(vm: AppVM, p: VoterProfileDto) {
+    var confirmReset by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = { vm.voterProfile = null },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Avatar(p.fullName, p.studentNumber.hashCode(), 44.dp)
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(ellipsize(p.fullName, 26), fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text(p.studentNumber, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(if (p.online) GREEN else MaterialTheme.colorScheme.outline))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (p.online) "Signed in now" else "Not signed in", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
+                Text("Program: ${p.program}", fontSize = 13.sp)
+                Text("Respondent code: ${p.respondentCode ?: "none"}", fontSize = 13.sp)
+                Text("Last sign-in: ${p.lastLogin?.let { timeAgo(it) } ?: "never"}", fontSize = 13.sp)
+                Text("Last seen: ${p.lastSeen?.let { timeAgo(it) } ?: "never"}", fontSize = 13.sp)
+                Text("Voted for ${p.positionsVoted} of ${p.positionsTotal} positions", fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    color = if (p.positionsVoted > 0) GREEN else MaterialTheme.colorScheme.onSurfaceVariant)
+                p.votes.forEach { v ->
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(10.dp)) {
+                        Text(v.position, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                        Text(ellipsize(v.candidateName, 30), fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                        Text(v.transactionId.take(16) + "...", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (confirmReset) {
+                    Text("Create a new password for this student? The old one stops working and the student is signed out.", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { confirmReset = false; vm.resetVoterPassword(p.studentNumber) }, enabled = !vm.locked) { Text("Yes, reset") }
+                        OutlinedButton(onClick = { confirmReset = false }) { Text("Cancel") }
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { confirmReset = true }, enabled = !vm.locked) { Text("Reset password", maxLines = 1) }
+                        if (p.online) OutlinedButton(onClick = { vm.endSession(p.studentNumber) }, enabled = !vm.locked) { Text("End session", maxLines = 1) }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { vm.voterProfile = null }) { Text("Close") } }
+    )
+}
+
+@Composable
+fun NewPasswordDialog(np: NewPasswordDto, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New password") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${np.fullName} (${np.studentNumber})", fontSize = 13.sp)
+                Text(np.password, fontFamily = FontFamily.Monospace, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(12.dp))
+                Text("This is shown only once. Share it privately with the student.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val send = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_SUBJECT, "VotEra password"); putExtra(Intent.EXTRA_TEXT, "VotEra login\nStudent number: ${np.studentNumber}\nNew password: ${np.password}") }
+                ctx.startActivity(Intent.createChooser(send, "Share the new password"))
+            }) { Text("Share") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+    )
 }
 
 // ----- Add voters from a spreadsheet -----
