@@ -94,7 +94,7 @@ fun AdminOverview(vm: AppVM) {
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
-            Card {
+            Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Election status", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
@@ -111,7 +111,7 @@ fun AdminOverview(vm: AppVM) {
             }
         }
         item {
-            Card {
+            Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Automatic closing time", style = MaterialTheme.typography.titleMedium)
                     val left = countdownText(vm.deadline)
@@ -136,7 +136,7 @@ fun AdminOverview(vm: AppVM) {
             }
         }
         item {
-            Card {
+            Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Turnout per program", style = MaterialTheme.typography.titleMedium)
                     if (vm.turnoutRows.isEmpty()) Text("No data yet.", fontSize = 13.sp)
@@ -155,7 +155,7 @@ fun AdminOverview(vm: AppVM) {
         }
         item { AdminInsights(vm) }
         item {
-            Card {
+            Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Flagged manifestos for review", style = MaterialTheme.typography.titleMedium)
                     if (vm.flagged.isEmpty()) Text("None flagged.", fontSize = 13.sp)
@@ -168,7 +168,7 @@ fun AdminOverview(vm: AppVM) {
             }
         }
         item {
-            Card {
+            Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Tools", style = MaterialTheme.typography.titleMedium)
                     OutlinedButton(onClick = {
@@ -187,11 +187,6 @@ fun AdminOverview(vm: AppVM) {
                     }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
                         Icon(VIcons.Download, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Backup everything (JSON)")
                     }
-                    OutlinedButton(onClick = { vm.demoCandidates() }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
-                        Icon(VIcons.People, contentDescription = null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Add sample candidates for all positions", maxLines = 1)
-                    }
-                    Text("Adds 16 fictional candidates for Auditor and the 7 councilor positions. Pressing it again adds nothing new. Not available after votes are cast.",
-                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedButton(onClick = { confirmDemo = true }, enabled = !vm.busy && vm.election?.status == "open", modifier = Modifier.fillMaxWidth()) {
                         Text("Demo mode: add 20 sample votes")
                     }
@@ -290,7 +285,8 @@ fun AdminCandidates(vm: AppVM) {
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(ellipsize(c.fullName, 28), fontWeight = FontWeight.Bold, maxLines = 1)
-                                Text("${ellipsize(c.position, 20)} | ${ellipsize(c.program, 20)}", fontSize = 12.sp, maxLines = 1)
+                                Text(c.position, fontSize = 12.sp, maxLines = 2)
+                                Text(ellipsize(c.program, 28), fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             CredRing(c.credibilityScore, 46.dp, 4.dp)
                         }
