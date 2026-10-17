@@ -51,6 +51,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -784,8 +785,8 @@ fun AdminPosts(vm: AppVM) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("New post", style = MaterialTheme.typography.titleMedium)
-                    OutlinedTextField(title, { title = cleanText(it, 80) }, label = { Text("Title") }, supportingText = { Text("${title.length}/80") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(body, { body = it.take(1000) }, label = { Text("Message") }, supportingText = { Text("${body.length}/1000") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(title, { title = cleanText(it, 80) }, label = { Text("Title") }, supportingText = { Text("${title.length}/80") }, singleLine = true, enabled = vm.canEdit, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(body, { body = it.take(1000) }, label = { Text("Message") }, supportingText = { Text("${body.length}/1000") }, minLines = 3, enabled = vm.canEdit, modifier = Modifier.fillMaxWidth())
                     Text("Category", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         POST_CATEGORIES.forEach { c -> FilterChip(selected = category == c, onClick = { category = c }, label = { Text(c, maxLines = 1) }) }
@@ -806,7 +807,7 @@ fun AdminPosts(vm: AppVM) {
                     Button(onClick = {
                         vm.postAnnouncement(title.trim(), body.trim(), category, pinned, image)
                         title = ""; body = ""; category = "General"; pinned = false; image = null
-                    }, enabled = title.isNotBlank() && !vm.busy, modifier = Modifier.fillMaxWidth()) { Text("Post") }
+                    }, enabled = title.isNotBlank() && !vm.locked, modifier = Modifier.fillMaxWidth()) { Text("Post") }
                     Text("Students see new posts right away. Pictures are shrunk before they are sent.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -872,7 +873,7 @@ fun VerifyReceiptDialog(vm: AppVM, onDismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { vm.verifyReceipt(tx) { res = it } }, enabled = tx.length == 64 && !vm.busy) { Text("Verify") } },
+        confirmButton = { TextButton(onClick = { vm.verifyReceipt(tx) { res = it } }, enabled = tx.length == 64 && !vm.locked) { Text("Verify") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } })
 }
 
@@ -922,7 +923,7 @@ fun FeedbackDialog(vm: AppVM, onDismiss: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = { vm.sendFeedback(FeedbackReq(ease, clarity, trust, overall, comment.trim())) },
-                enabled = ease > 0 && clarity > 0 && trust > 0 && overall > 0 && !vm.busy) { Text("Send") }
+                enabled = ease > 0 && clarity > 0 && trust > 0 && overall > 0 && !vm.locked) { Text("Send") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
@@ -1120,7 +1121,7 @@ object ProofCache {
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val bytes = Net.api.proofImage(id).bytes()
-                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { androidx.compose.ui.graphics.asImageBitmap(it) }
+                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
                 if (bmp != null) cache.put(id, bmp)
                 bmp
             } catch (t: kotlinx.coroutines.CancellationException) { throw t } catch (t: Exception) { null }
@@ -1219,7 +1220,7 @@ fun ProofGallery(c: CandidateDto, isAdmin: Boolean) {
 
 /** Candidate editor: current pictures (hide, show or delete them right away) and new pictures to add (uploaded when Save is tapped). */
 @Composable
-fun ProofSection(candidateId: Int?, drafts: androidx.compose.runtime.snapshots.SnapshotStateList<ProofDraft>, onError: (String?) -> Unit) {
+fun ProofSection(candidateId: Int?, drafts: androidx.compose.runtime.snapshots.SnapshotStateList<ProofDraft>, online: Boolean, onError: (String?) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var existing by remember(candidateId) { mutableStateOf<List<ProofDto>>(emptyList()) }
@@ -1258,7 +1259,7 @@ fun ProofSection(candidateId: Int?, drafts: androidx.compose.runtime.snapshots.S
                         if (src.isNotBlank()) Text(src, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (p.status == "rejected") Text("Hidden from students", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
                     }
-                    TextButton(enabled = !busy, onClick = {
+                    TextButton(enabled = !busy && online, onClick = {
                         busy = true
                         scope.launch {
                             try { Net.api.patchProof(p.id, ProofPatchReq(status = if (p.status == "rejected") "verified" else "rejected")); reload++ }
@@ -1266,7 +1267,7 @@ fun ProofSection(candidateId: Int?, drafts: androidx.compose.runtime.snapshots.S
                             busy = false
                         }
                     }) { Text(if (p.status == "rejected") "Show" else "Hide") }
-                    TextButton(enabled = !busy, onClick = {
+                    TextButton(enabled = !busy && online, onClick = {
                         busy = true
                         scope.launch {
                             try { Net.api.deleteProof(p.id); reload++ }
@@ -1280,7 +1281,7 @@ fun ProofSection(candidateId: Int?, drafts: androidx.compose.runtime.snapshots.S
         if (drafts.isNotEmpty()) {
             Text("Will be uploaded when you tap Save", fontSize = 12.sp, fontWeight = FontWeight.Medium)
             drafts.forEachIndexed { i, d ->
-                val bmp = remember(d) { android.graphics.BitmapFactory.decodeByteArray(d.bytes, 0, d.bytes.size)?.let { androidx.compose.ui.graphics.asImageBitmap(it) } }
+                val bmp = remember(d) { android.graphics.BitmapFactory.decodeByteArray(d.bytes, 0, d.bytes.size)?.asImageBitmap() }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
                         if (bmp != null) Image(bitmap = bmp, contentDescription = "New certificate", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -1298,12 +1299,12 @@ fun ProofSection(candidateId: Int?, drafts: androidx.compose.runtime.snapshots.S
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PROOF_CATEGORIES.forEach { (key, label) -> FilterChip(selected = category == key, onClick = { category = key }, label = { Text(label) }) }
         }
-        OutlinedTextField(caption, { caption = cleanText(it, 120) }, label = { Text("Caption (example: Dean's Lister, 2025)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(caption, { caption = cleanText(it, 120) }, label = { Text("Caption (example: Dean's Lister, 2025)") }, singleLine = true, enabled = online, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(issuer, { issuer = cleanText(it, 80) }, label = { Text("Issued by") }, singleLine = true, modifier = Modifier.weight(2f))
-            OutlinedTextField(issuedOn, { issuedOn = cleanText(it, 20) }, label = { Text("When") }, placeholder = { Text("2025") }, singleLine = true, modifier = Modifier.weight(1f))
+            OutlinedTextField(issuer, { issuer = cleanText(it, 80) }, label = { Text("Issued by") }, singleLine = true, enabled = online, modifier = Modifier.weight(2f))
+            OutlinedTextField(issuedOn, { issuedOn = cleanText(it, 20) }, label = { Text("When") }, placeholder = { Text("2025") }, singleLine = true, enabled = online, modifier = Modifier.weight(1f))
         }
-        OutlinedButton(onClick = { picker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) { Text("Choose certificate picture") }
+        OutlinedButton(onClick = { picker.launch("image/*") }, enabled = online, modifier = Modifier.fillMaxWidth()) { Text("Choose certificate picture") }
     }
     viewing?.let { ProofViewer(it) { viewing = null } }
 }
