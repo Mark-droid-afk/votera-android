@@ -10,6 +10,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
@@ -57,7 +59,14 @@ fun AdminTab(vm: AppVM) {
             }
         }
         AnimatedContent(targetState = sub, label = "adminSub", modifier = Modifier.fillMaxSize(),
-            transitionSpec = { fadeIn(tween(220, delayMillis = 60)) togetherWith fadeOut(tween(120)) }) { s ->
+            transitionSpec = {
+                if (Prefs.reduceMotion) fadeIn(tween(1)) togetherWith fadeOut(tween(1)) else {
+                    // Slide a little toward the side of the chip that was tapped, with a soft fade.
+                    val dir = if (chipIds.indexOf(targetState) >= chipIds.indexOf(initialState)) 1 else -1
+                    (slideInHorizontally(tween(320)) { dir * it / 6 } + fadeIn(tween(280, delayMillis = 60))) togetherWith
+                        (slideOutHorizontally(tween(260)) { -dir * it / 6 } + fadeOut(tween(140)))
+                }
+            }) { s ->
             when (s) {
                 "overview" -> AdminOverview(vm)
                 "posts" -> AdminPosts(vm)
