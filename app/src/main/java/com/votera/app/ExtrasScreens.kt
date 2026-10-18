@@ -1373,3 +1373,37 @@ fun Modifier.smoothEnter(key: String, index: Int = 0, dir: Int = 1): Modifier {
     val dx = with(LocalDensity.current) { 32.dp.toPx() }
     return this.graphicsLayer { alpha = p; translationX = (1f - p) * dx * dir }
 }
+
+
+// ---------------- Profile completeness (display only; it does not change the credibility score) ----------------
+/** Which parts of a candidate's profile are filled in. Returns (filled, missing names). */
+fun completeness(c: CandidateDto): Pair<Int, List<String>> {
+    val parts = listOf(
+        "manifesto" to c.manifesto.isNotBlank(),
+        "photo" to (c.photoVersion > 0),
+        "achievements" to c.achievements.isNotBlank(),
+        "leadership" to c.leadership.isNotBlank(),
+        "community involvement" to c.community.isNotBlank(),
+        "verified documents" to (c.proofCount > 0),
+        "video or Q&A" to (!c.videoUrl.isNullOrBlank() || !c.qa.isNullOrBlank())
+    )
+    return parts.count { it.second } to parts.filter { !it.second }.map { it.first }
+}
+
+@Composable
+fun CompletenessCard(c: CandidateDto) {
+    val (filled, missing) = completeness(c)
+    val total = 7
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Profile completeness", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text("$filled of $total", fontWeight = FontWeight.Bold, color = if (filled == total) GREEN else MaterialTheme.colorScheme.primary)
+            }
+            LinearProgressIndicator(progress = { filled.toFloat() / total }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)))
+            Text(if (missing.isEmpty()) "Every part of this profile is filled in." else "Not provided yet: " + missing.joinToString(", "),
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("This shows how much the candidate submitted. It is not part of the credibility score.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
