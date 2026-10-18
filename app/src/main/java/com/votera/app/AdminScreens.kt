@@ -178,6 +178,32 @@ fun AdminOverview(vm: AppVM) {
             }
         }
         item {
+            LaunchedEffect(vm.results?.turnout?.votesCast, vm.election?.status) { vm.loadQuota() }
+            val q = vm.quota
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Pilot respondents", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        if (q != null) Text("${q.finishedTotal} of ${q.targetTotal}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Text("Target respondents per program (Table 1) against students who have voted for every position.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (q == null) Text("Loading...", fontSize = 12.sp)
+                    q?.rows?.forEach { r ->
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row {
+                                Text(ellipsize(r.program, 30), fontSize = 12.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                                Text("${r.finished} / ${r.target}" + if (r.started > r.finished) "  (+${r.started - r.finished} started)" else "", fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium, color = if (r.finished >= r.target) GREEN else MaterialTheme.colorScheme.onSurface)
+                            }
+                            LinearProgressIndicator(progress = { if (r.target == 0) 0f else (r.finished.toFloat() / r.target).coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)))
+                        }
+                    }
+                    if (q != null && q.positions == 0) Text("No published candidates yet, so no one can finish a ballot.", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+        item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Tools", style = MaterialTheme.typography.titleMedium)
@@ -336,6 +362,11 @@ fun AdminCandidates(vm: AppVM) {
                             fontSize = 12.sp, color = if (c.flagged) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("Documents on file: achievements ${c.proofAchievements}, leadership ${c.proofLeadership}, community ${c.proofCommunity}",
                             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val (filled, _) = completeness(c)
+                        Text("Profile completeness: $filled of 7", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (c.mostSimilarName != null) TextButton(onClick = { vm.openSimilarity(c.id) }, enabled = !vm.busy, contentPadding = PaddingValues(0.dp)) {
+                            Text("Compare with the most similar manifesto", fontSize = 12.sp)
+                        }
                         if (!c.missingProof.isNullOrEmpty()) Text("No proof yet for: " + c.missingProof.joinToString(", "), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             val kb = KeyboardOptions(keyboardType = KeyboardType.Decimal)
@@ -363,6 +394,7 @@ fun AdminCandidates(vm: AppVM) {
         }
     }
 
+    vm.similarity?.let { SimilarityDialog(it, onDismiss = { vm.similarity = null }) }
     if (adding) CandidateEditor(null, vm.canEdit, onDismiss = { adding = false }, onRemovePhoto = {}) { req, photo, proofs -> vm.addCandidate(req, photo, proofs); adding = false }
     editing?.let { c ->
         CandidateEditor(c, vm.canEdit, onDismiss = { editing = null }, onRemovePhoto = { vm.removePhoto(c.id); editing = null }) { req, photo, proofs ->
@@ -616,6 +648,46 @@ fun AdminVoters(vm: AppVM) {
     vm.voterProfile?.let { VoterProfileDialog(vm, it) }
     vm.newPassword?.let { np -> NewPasswordDialog(np, onDismiss = { vm.newPassword = null }) }
     vm.importResult?.let { r -> ImportResultDialog(r, onDismiss = { vm.importResult = null }) }
+}
+
+// ----- Why a manifesto got its similarity (administrator only) -----
+@Composable
+fun SimilarityDialog(r: SimilarityRes, onDismiss: () -> Unit) {
+    val terms = r.sharedTerms.map { it.term.lowercase() }.toSet()
+    // Marks shared words by making them bold; the rest of the text is left exactly as written.
+    fun marked(text: String) = androidx.compose.ui.text.buildAnnotatedString {
+        Regex("[A-Za-z']+|[^A-Za-z']+").findAll(text).forEach { m ->
+            if (m.value.lowercase() in terms) {
+                pushStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold, background = androidx.compose.ui.graphics.Color(0x33FFC107)))
+                append(m.value); pop()
+            } else append(m.value)
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Why this similarity?") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Cosine similarity ${fmt(r.similarity * 100)}%" + if (r.flagged) " - flagged for review (${fmt(r.threshold * 100)}% or higher)" else " - below the ${fmt(r.threshold * 100)}% review line",
+                    fontWeight = FontWeight.Medium, fontSize = 13.sp, color = if (r.flagged) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                if (r.other == null) Text("No other manifesto shares any distinctive words with this one.", fontSize = 13.sp)
+                else {
+                    Text("Shared distinctive words are highlighted. The most common words are ignored, and rarer shared words count more.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (r.sharedTerms.isNotEmpty()) Text("Shared: " + r.sharedTerms.joinToString(", ") { it.term }, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    listOf(r.candidate, r.other).forEach { p ->
+                        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(10.dp)) {
+                            Text(ellipsize(p.fullName, 30), fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                            Text(p.position, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                            Spacer(Modifier.height(4.dp))
+                            Text(marked(p.manifesto.ifBlank { "(no manifesto)" }), fontSize = 13.sp)
+                        }
+                    }
+                    Text("A flag is a reason to read both texts, not a rejection. TF-IDF can miss reworded copying and can catch common campaign phrases.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
 }
 
 // ----- Quick profile of one student -----
