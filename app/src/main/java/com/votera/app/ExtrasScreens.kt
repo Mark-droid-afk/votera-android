@@ -1165,6 +1165,8 @@ object ProofCache {
     }
 }
 
+val PROOF_ISSUERS = listOf("PUP Quezon City Campus", "Student organization", "Barangay or local government", "Company or employer", "Training or seminar provider")
+
 /** "2025 | Guidance Office" style line from the issuer and date of a document. */
 fun proofSource(issuer: String, issuedOn: String): String = listOf(issuer.trim(), issuedOn.trim()).filter { it.isNotEmpty() }.joinToString(" | ")
 
@@ -1263,7 +1265,9 @@ fun ProofSection(candidateId: Int?, drafts: androidx.compose.runtime.snapshots.S
     var reload by remember { mutableStateOf(0) }
     var category by remember { mutableStateOf("achievements") }
     var caption by remember { mutableStateOf("") }
-    var issuer by remember { mutableStateOf("") }
+    var issuerChoice by remember { mutableStateOf("") }
+    var issuerOther by remember { mutableStateOf("") }
+    val issuer = if (issuerChoice == OTHER_OPTION) issuerOther.trim() else issuerChoice
     var issuedOn by remember { mutableStateOf("") }
     var viewing by remember { mutableStateOf<ProofDto?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -1337,9 +1341,12 @@ fun ProofSection(candidateId: Int?, drafts: androidx.compose.runtime.snapshots.S
         }
         OutlinedTextField(caption, { caption = cleanText(it, 120) }, label = { Text("Caption (example: Dean's Lister, 2025)") }, singleLine = true, enabled = online, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(issuer, { issuer = cleanText(it, 80) }, label = { Text("Issued by") }, singleLine = true, enabled = online, modifier = Modifier.weight(2f))
-            OutlinedTextField(issuedOn, { issuedOn = cleanText(it, 20) }, label = { Text("When") }, placeholder = { Text("2025") }, singleLine = true, enabled = online, modifier = Modifier.weight(1f))
+            DropdownField("Issued by", issuerChoice, PROOF_ISSUERS + OTHER_OPTION, enabled = online, modifier = Modifier.weight(2f)) { issuerChoice = it }
+            val thisYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+            DropdownField("Year", issuedOn, (thisYear downTo thisYear - 9).map { it.toString() }, enabled = online, modifier = Modifier.weight(1f)) { issuedOn = it }
         }
+        if (issuerChoice == OTHER_OPTION) OutlinedTextField(issuerOther, { issuerOther = cleanText(it, 80) }, label = { Text("Specify who issued it") },
+            singleLine = true, enabled = online, modifier = Modifier.fillMaxWidth())
         OutlinedButton(onClick = { picker.launch("image/*") }, enabled = online, modifier = Modifier.fillMaxWidth()) { Text("Choose certificate picture") }
     }
     viewing?.let { ProofViewer(it) { viewing = null } }
