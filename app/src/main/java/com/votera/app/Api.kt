@@ -180,6 +180,12 @@ data class NewPasswordDto(val studentNumber: String, val fullName: String, val p
 data class SessionDto(val studentNumber: String, val fullName: String, val role: String, val program: String, val lastLogin: String? = null, val lastSeen: String? = null)
 data class SessionsRes(val minutes: Int = 15, val sessions: List<SessionDto> = emptyList())
 data class EndedRes(val ended: String)
+data class QuotaRowDto(val program: String, val target: Int, val started: Int, val finished: Int, val remaining: Int)
+data class QuotaRes(val positions: Int = 0, val targetTotal: Int = 0, val finishedTotal: Int = 0, val startedTotal: Int = 0, val rows: List<QuotaRowDto> = emptyList())
+data class SimPersonDto(val id: Int, val fullName: String, val position: String, val manifesto: String)
+data class SharedTermDto(val term: String, val weight: Double)
+data class SimilarityRes(val similarity: Double, val flagged: Boolean, val threshold: Double, val candidate: SimPersonDto,
+                         val other: SimPersonDto? = null, val sharedTerms: List<SharedTermDto> = emptyList())
 data class ScoresReq(val achievementsScore: Double, val leadershipScore: Double, val communityScore: Double)
 data class FlaggedRes(val threshold: Double, val flagged: List<CandidateDto>)
 data class AnnouncementDto(val id: Int, val title: String, val body: String, val createdAt: String,
@@ -265,6 +271,8 @@ interface VoteraApi {
     @PUT("admin/candidates/{id}/published") suspend fun setPublished(@Path("id") id: Int, @Body b: PublishedReq): CandidateDto
     @GET("admin/voters/{sn}/profile") suspend fun voterProfile(@Path("sn") sn: String): VoterProfileDto
     @POST("admin/voters/{sn}/reset-password") suspend fun resetOnePassword(@Path("sn") sn: String): NewPasswordDto
+    @GET("admin/quota") suspend fun quota(): QuotaRes
+    @GET("admin/candidates/{id}/similarity") suspend fun similarity(@Path("id") id: Int): SimilarityRes
     @GET("admin/sessions") suspend fun sessions(): SessionsRes
     @POST("admin/sessions/{sn}/end") suspend fun endSession(@Path("sn") sn: String): EndedRes
     @GET("admin/turnout") suspend fun turnoutByProgram(): List<TurnoutRowDto>
