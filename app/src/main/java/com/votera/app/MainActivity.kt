@@ -163,6 +163,8 @@ class AppVM : ViewModel() {
     var sessions by mutableStateOf<List<SessionDto>>(emptyList())
     var sessionsMinutes by mutableStateOf(15)
     var showPreview by mutableStateOf(false)
+    var quota by mutableStateOf<QuotaRes?>(null)
+    var similarity by mutableStateOf<SimilarityRes?>(null)
     var needServer by mutableStateOf(false)  // set when login cannot reach the server, so the login screen offers the address field
     var receiptName by mutableStateOf<String?>(null)
     var loaded by mutableStateOf(false)               // true after the first full load, so lists show placeholders instead of "empty" while loading
@@ -400,7 +402,7 @@ class AppVM : ViewModel() {
         Session.token = null
         user = null; election = null; candidates = emptyList(); announcements = emptyList()
         results = null; voteStatus = null; flagged = emptyList(); otpToken = ""; devOtp = ""
-        votes = emptyList(); voters = emptyList(); turnoutRows = emptyList(); voterProfile = null; newPassword = null; sessions = emptyList(); showPreview = false
+        votes = emptyList(); voters = emptyList(); turnoutRows = emptyList(); voterProfile = null; newPassword = null; sessions = emptyList(); showPreview = false; quota = null; similarity = null
         showReceipt = false; receiptName = null; showTutorial = false; importResult = null; credentials = null; deadline = null; candidateQuery = ""; candidateSort = "default"; updatesCategory = "All"; updatesQuery = ""; comparePicked = emptyList(); adminSub = "overview"
         loaded = false; offline = false; banner = null; knownAnnouncements = null; matchMode = false; priorities = listOf(5f, 5f, 5f, 5f)
         auditLog = emptyList(); auditOnlyProblems = false; selfTest = null; selfTesting = false; candidatesListState = LazyListState()
@@ -437,6 +439,14 @@ class AppVM : ViewModel() {
     }
     fun openVoterProfile(sn: String) = launchTask { voterProfile = Net.api.voterProfile(sn) }
     fun resetVoterPassword(sn: String) = launchTask { newPassword = Net.api.resetOnePassword(sn); voterProfile = Net.api.voterProfile(sn) }
+    fun loadQuota() {
+        viewModelScope.launch {
+            try { quota = Net.api.quota() }
+            catch (e: CancellationException) { throw e }
+            catch (t: Throwable) { if (t is HttpException && t.code() == 401) handleError(t) }
+        }
+    }
+    fun openSimilarity(id: Int) = launchTask { similarity = Net.api.similarity(id) }
     fun loadSessions() = launchTask { val r = Net.api.sessions(); sessions = r.sessions; sessionsMinutes = r.minutes }
     fun endSession(sn: String) = launchTask {
         Net.api.endSession(sn)
@@ -1238,6 +1248,7 @@ fun CandidateDetail(c: CandidateDto, vm: AppVM, onBack: () -> Unit, onVote: () -
             val uri = LocalUriHandler.current
             OutlinedButton(onClick = { runCatching { uri.openUri(c.videoUrl) } }, modifier = Modifier.fillMaxWidth()) { Text("Watch platform video") }
         }
+        CompletenessCard(c)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Credibility score breakdown", style = MaterialTheme.typography.titleMedium)
