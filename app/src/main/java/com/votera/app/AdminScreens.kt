@@ -417,7 +417,10 @@ fun AdminCandidates(vm: AppVM) {
 fun CandidateEditor(initial: CandidateDto?, canSave: Boolean, onDismiss: () -> Unit, onRemovePhoto: () -> Unit, onSave: (CandidateReq, ByteArray?, List<ProofDraft>) -> Unit) {
     val proofDrafts = remember { mutableStateListOf<ProofDraft>() }
     var name by remember { mutableStateOf(initial?.fullName ?: "") }
-    var program by remember { mutableStateOf(initial?.program ?: "") }
+    val initProg = initial?.program ?: ""
+    var programChoice by remember { mutableStateOf(when { initProg.isBlank() -> ""; initProg in PROGRAM_LIST -> initProg; else -> OTHER_OPTION }) }
+    var programOther by remember { mutableStateOf(if (initProg.isNotBlank() && initProg !in PROGRAM_LIST) initProg else "") }
+    val program = if (programChoice == OTHER_OPTION) programOther.trim() else programChoice
     val initPos = initial?.position?.let { findPosition(it)?.name ?: it } ?: ""
     var position by remember { mutableStateOf(initPos) }
     var customPos by remember { mutableStateOf(initial != null && initPos.isNotBlank() && findPosition(initPos) == null) }
@@ -461,7 +464,9 @@ fun CandidateEditor(initial: CandidateDto?, canSave: Boolean, onDismiss: () -> U
                     }
                 }
                 OutlinedTextField(name, { name = cleanText(it, 60) }, label = { Text("Full name") }, singleLine = true, enabled = canSave, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(program, { program = cleanText(it, 40) }, label = { Text("Program") }, supportingText = { Text("${program.length}/40") }, singleLine = true, enabled = canSave, modifier = Modifier.fillMaxWidth())
+                DropdownField("Program", programChoice, PROGRAM_LIST + OTHER_OPTION, enabled = canSave) { programChoice = it }
+                if (programChoice == OTHER_OPTION) OutlinedTextField(programOther, { programOther = cleanText(it, 40) }, label = { Text("Specify the program") },
+                    supportingText = { Text("${programOther.length}/40") }, singleLine = true, enabled = canSave, modifier = Modifier.fillMaxWidth())
                 ExposedDropdownMenuBox(expanded = posMenu, onExpandedChange = { posMenu = it }) {
                     OutlinedTextField(
                         value = if (customPos) "Other (type your own)" else position.ifBlank { "" },
@@ -520,6 +525,8 @@ fun CandidateEditor(initial: CandidateDto?, canSave: Boolean, onDismiss: () -> U
                 val bad = scores.any { it.isNotBlank() && (score(it) == null || score(it)!! < 0 || score(it)!! > 100) }
                 when {
                     name.isBlank() -> error = "Enter the candidate's name"
+                    programChoice.isBlank() -> error = "Choose the candidate's program"
+                    program.isBlank() -> error = "Specify the program, or pick one from the list"
                     position.isBlank() -> error = "Choose a position, or pick Other and type one"
                     bad -> error = "Scores must be numbers from 0 to 100"
                     else -> onSave(CandidateReq(name.trim(), program.trim(), position.trim(), manifesto.trim(), ach.trim(), lead.trim(), comm.trim(),
@@ -772,6 +779,23 @@ fun NewPasswordDialog(np: NewPasswordDto, onDismiss: () -> Unit) {
 // This text must match what the server accepts (see /admin/voters/import in main.py).
 private const val SHEET_COLUMNS = "student_number,full_name,program,password"
 private const val SHEET_EXAMPLE = SHEET_COLUMNS + "\n2022-90251-CM-0,Juan Dela Cruz,BSIT,\n2022-90252-CM-0,Maria Santos,BSBA - HRM,mypass123"
+const val OTHER_OPTION = "Other (specify)"
+
+/** A read-only field that opens a list of choices. Same look as the other text fields. */
+@Composable
+fun DropdownField(label: String, value: String, options: List<String>, enabled: Boolean = true, modifier: Modifier = Modifier.fillMaxWidth(), onSelect: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = open, onExpandedChange = { if (enabled) open = it }, modifier = modifier) {
+        OutlinedTextField(value, {}, readOnly = true, enabled = enabled, singleLine = true, label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) }, modifier = Modifier.menuAnchor().fillMaxWidth())
+        ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            options.forEach { o ->
+                DropdownMenuItem(text = { Text(o, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }, onClick = { onSelect(o); open = false })
+            }
+        }
+    }
+}
+
 private val PROGRAM_LIST = listOf("BSIT", "BTLEd - Home Economics", "BTLEd - ICT", "BSBA - HRM", "BSBA - MM",
     "BS Entrepreneurship", "BPA - Fiscal Administration", "DOMT - Medical Office Management")
 
